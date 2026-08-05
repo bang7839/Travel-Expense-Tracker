@@ -18,28 +18,37 @@ function doGet(e) {
   var data = sheet.getDataRange().getValues();
   
   if (data.length <= 1) {
-    return createJsonResponse({ success: true, expenses: [], settings: null });
+    return createJsonResponse({ success: true, expenses: [], settings: null, allTrips: {} });
   }
   
   var expenses = [];
   var settings = null;
+  var allTrips = {}; // 所有行程設定集
   
   for (var i = 1; i < data.length; i++) {
     var row = data[i];
     
-    // 多行程設定隔離 (SETTINGS_CONFIG_tripId)
+    // 收集所有行程設定 (SETTINGS_CONFIG_tripId)
     if (row[0] && row[0].toString().indexOf('SETTINGS_CONFIG') === 0) {
-      if (!targetTripId || row[0] === ('SETTINGS_CONFIG_' + targetTripId)) {
-        try {
-          settings = JSON.parse(row[1]);
-        } catch(err) {}
-      }
+      try {
+        var parsedSettings = JSON.parse(row[1]);
+        var keyParts = row[0].toString().split('_');
+        var tId = keyParts.length > 2 ? keyParts.slice(2).join('_') : 'trip_default';
+        allTrips[tId] = {
+          id: tId,
+          settings: parsedSettings
+        };
+
+        if (!targetTripId || row[0] === ('SETTINGS_CONFIG_' + targetTripId) || row[0] === 'SETTINGS_CONFIG') {
+          settings = parsedSettings;
+        }
+      } catch(err) {}
       continue;
     }
     
     if (!row[0]) continue;
     
-    // 比對 tripId 進行過濾 (欄位索引 15 為 TripId)
+    // 比對 tripId：若資料含有 TripId 且傳入了 targetTripId 則進行篩選；若舊資料無 TripId 則一律載入
     var rowTripId = row[15] || '';
     if (targetTripId && rowTripId && rowTripId !== targetTripId) {
       continue;
@@ -65,7 +74,7 @@ function doGet(e) {
     });
   }
   
-  return createJsonResponse({ success: true, expenses: expenses, settings: settings });
+  return createJsonResponse({ success: true, expenses: expenses, settings: settings, allTrips: allTrips });
 }
 
 function doPost(e) {

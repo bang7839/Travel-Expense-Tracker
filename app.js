@@ -1,6 +1,5 @@
-/**
- * TravelPay - 旅遊記帳前端核心 Logic (app.js) - 多行程支援版
- */
+// 預設全域 Google Apps Script API 網址 (填入您的 API，所有親友打開網頁便能自動連線雲端資料庫)
+const DEFAULT_GAS_URL = "";
 
 // 預設單一行程結構
 const CREATE_DEFAULT_TRIP = (id = "trip_tokyo", name = "東京快樂之旅 🎌", ownerPwd = "1234", memberPwd = "0000") => ({
@@ -19,7 +18,7 @@ const CREATE_DEFAULT_TRIP = (id = "trip_tokyo", name = "東京快樂之旅 🎌"
 });
 
 // 全域 State
-let globalGasUrl = localStorage.getItem("travelpay_global_gas_url") || "";
+let globalGasUrl = localStorage.getItem("travelpay_global_gas_url") || DEFAULT_GAS_URL;
 let tripsStore = {};
 let currentTripId = "trip_tokyo";
 
@@ -38,6 +37,11 @@ document.addEventListener("DOMContentLoaded", () => {
   renderTripSelectDropdown();
   initEventListeners();
   checkPasswordLockStatus();
+
+  // 第一次開啟網頁：背後自動連線抓取 Google 雲端上的最新行程選單
+  if (globalGasUrl) {
+    syncFromGoogleSheets();
+  }
 
   // 設定預設日期為今天
   document.getElementById("expense-date").value = new Date().toISOString().split("T")[0];
@@ -166,7 +170,7 @@ function checkPasswordLockStatus() {
 
 // 2. Google Apps Script 雲端同步 (使用全域 API 網址)
 async function syncFromGoogleSheets() {
-  const baseUrl = globalGasUrl || appState.settings.gasUrl;
+  const baseUrl = globalGasUrl || (appState.settings ? appState.settings.gasUrl : "");
   if (!baseUrl) return;
 
   const url = `${baseUrl}?tripId=${encodeURIComponent(currentTripId)}`;
@@ -177,7 +181,23 @@ async function syncFromGoogleSheets() {
     const data = await res.json();
     
     if (data.success) {
-      if (data.expenses && data.expenses.length > 0) {
+      // 雲端拉回所有已知行程選單 (極重要：親友第一次開啟網頁能自動同步所有行程)
+      if (data.allTrips && Object.keys(data.allTrips).length > 0) {
+        Object.keys(data.allTrips).forEach(tId => {
+          if (!tripsStore[tId]) {
+            tripsStore[tId] = {
+              id: tId,
+              settings: data.allTrips[tId].settings,
+              expenses: []
+            };
+          } else {
+            tripsStore[tId].settings = { ...tripsStore[tId].settings, ...data.allTrips[tId].settings };
+          }
+        });
+        renderTripSelectDropdown();
+      }
+
+      if (data.expenses) {
         appState.expenses = data.expenses;
       }
       if (data.settings) {
@@ -505,7 +525,8 @@ function initEventListeners() {
     document.getElementById("input-lock-password").value = "";
     renderApp();
 
-    if (globalGasUrl) {
+    const gasUrl = globalGasUrl || (appState.settings ? appState.settings.gasUrl : "");
+    if (gasUrl) {
       syncFromGoogleSheets();
     }
   }

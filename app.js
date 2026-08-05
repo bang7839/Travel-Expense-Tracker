@@ -56,7 +56,19 @@ function loadLocalStorage() {
     }
   }
 
-  // 若無行程，初始化一個預設行程
+  // 自動去重 (刪除重複名稱的預設 Sample 行程)
+  const uniqueStore = {};
+  const seenNames = new Set();
+  Object.keys(tripsStore).forEach(id => {
+    const name = tripsStore[id].settings ? tripsStore[id].settings.tripName : "";
+    if (!name || !seenNames.has(name)) {
+      if (name) seenNames.add(name);
+      uniqueStore[id] = tripsStore[id];
+    }
+  });
+  tripsStore = uniqueStore;
+
+  // 若去重後完全無行程，初始化一個預設行程
   if (Object.keys(tripsStore).length === 0) {
     const defaultTrip = CREATE_DEFAULT_TRIP();
     tripsStore[defaultTrip.id] = defaultTrip;
@@ -154,8 +166,10 @@ function checkPasswordLockStatus() {
 
 // 2. Google Apps Script 雲端同步 (使用全域 API 網址)
 async function syncFromGoogleSheets() {
-  const url = globalGasUrl || appState.settings.gasUrl;
-  if (!url) return;
+  const baseUrl = globalGasUrl || appState.settings.gasUrl;
+  if (!baseUrl) return;
+
+  const url = `${baseUrl}?tripId=${encodeURIComponent(currentTripId)}`;
 
   updateSyncStatus("loading", "同步中...");
   try {
@@ -190,25 +204,6 @@ async function sendToGoogleSheets(action, payload) {
       mode: "no-cors",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action, tripId: currentTripId, ...payload })
-    });
-    updateSyncStatus("online", "雲端已更新");
-  } catch (err) {
-    console.error("Post Error:", err);
-    updateSyncStatus("offline", "僅存於本地");
-  }
-}
-
-async function sendToGoogleSheets(action, payload) {
-  const url = appState.settings.gasUrl;
-  if (!url) return;
-
-  try {
-    updateSyncStatus("loading", "更新雲端...");
-    await fetch(url, {
-      method: "POST",
-      mode: "no-cors",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action, ...payload })
     });
     updateSyncStatus("online", "雲端已更新");
   } catch (err) {

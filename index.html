@@ -20,7 +20,7 @@
         <i class="fa-solid fa-lock"></i>
       </div>
       <h2>旅遊記帳本</h2>
-      <p class="lock-subtitle">請輸入存取密碼以開啟記帳內容<br><small style="color:var(--primary); font-weight:600;">(預設密碼：1234)</small></p>
+      <p class="lock-subtitle">請輸入存取密碼以開啟記帳內容</p>
       
       <form id="form-login" class="lock-form">
         <!-- 🧳 多行程選擇下拉選單 -->
@@ -265,7 +265,29 @@
 
           <div class="form-group">
             <label for="expense-note"><i class="fa-regular fa-sticky-note"></i> 備註 (可選)</label>
-            <input type="text" id="expense-note" placeholder="如：含卡費回饋、收據相片記號">
+            <input type="text" id="expense-note" placeholder="如：含卡費回饋、收據內容">
+          </div>
+
+          <!-- 📎 附件/圖片上傳 -->
+          <div class="form-group">
+            <label><i class="fa-solid fa-paperclip"></i> 附件 / 收據相片 (可選)</label>
+            <input type="file" id="expense-attachment-input" accept="image/*,.pdf,.doc,.docx" style="display:none;">
+            
+            <div style="display:flex; gap:10px; align-items:center;">
+              <button type="button" id="btn-trigger-upload" class="btn-secondary" style="font-size:0.85rem; padding:8px 14px;">
+                <i class="fa-solid fa-camera"></i> 拍照 / 選擇檔案
+              </button>
+              <button type="button" id="btn-remove-attachment" class="btn-secondary" style="display:none; color:#ef4444; font-size:0.85rem; padding:8px 12px;">
+                <i class="fa-solid fa-trash-can"></i> 移除
+              </button>
+            </div>
+
+            <div id="attachment-preview-container" style="margin-top:8px; display:none;">
+              <!-- 預覽圖或檔案名 -->
+            </div>
+            <input type="hidden" id="expense-attachment-data">
+            <input type="hidden" id="expense-attachment-name">
+            <input type="hidden" id="expense-attachment-type">
           </div>
 
           <div class="modal-footer-btns">
@@ -383,6 +405,24 @@
         <div class="modal-footer-btns" id="dialog-buttons">
           <button type="button" class="btn-secondary" id="btn-dialog-cancel">取消</button>
           <button type="button" class="btn-primary" id="btn-dialog-confirm">確定</button>
+        </div>
+      </div>
+    <!-- Modal 4: 圖片與附件全螢幕檢視器 (Media Viewer Modal) -->
+    <div class="modal-overlay" id="modal-media-viewer" style="align-items:center; justify-content:center; z-index:3000;">
+      <div class="modal-card" style="border-radius:20px; max-width:440px; padding:20px; text-align:center; transform:none; background:rgba(15, 23, 42, 0.95); max-height:85vh; display:flex; flex-direction:column;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+          <h3 id="viewer-title" style="font-size:1rem; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:240px;">附件檢視</h3>
+          <button class="btn-close-modal" id="btn-close-media-viewer">&times;</button>
+        </div>
+
+        <div id="viewer-content-area" style="flex:1; overflow-y:auto; display:flex; align-items:center; justify-content:center; background:#000; border-radius:12px; padding:8px; min-height:200px; margin-bottom:16px;">
+          <!-- 圖片或檔案內容 -->
+        </div>
+
+        <div style="display:flex; gap:10px;">
+          <a id="btn-download-attachment" href="#" download="" class="btn-primary" style="text-decoration:none; display:flex; align-items:center; justify-content:center; gap:8px;">
+            <i class="fa-solid fa-download"></i> 下載附件
+          </a>
         </div>
       </div>
     </div>

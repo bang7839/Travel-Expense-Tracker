@@ -194,6 +194,26 @@ async function syncFromGoogleSheets() {
             tripsStore[tId].settings = { ...tripsStore[tId].settings, ...data.allTrips[tId].settings };
           }
         });
+        
+        // 嚴格依照行程名稱去重 (防止雲端舊資料與新資料同名並存)
+        const uniqueStore = {};
+        const seenNames = new Set();
+        Object.keys(tripsStore).forEach(id => {
+          const name = tripsStore[id].settings ? tripsStore[id].settings.tripName : "";
+          if (!name || !seenNames.has(name)) {
+            if (name) seenNames.add(name);
+            uniqueStore[id] = tripsStore[id];
+          }
+        });
+        tripsStore = uniqueStore;
+
+        // 如果當前選中的行程在去重過程中被移除了，則自動選取剩餘的第一個
+        if (!tripsStore[currentTripId] && Object.keys(tripsStore).length > 0) {
+          currentTripId = Object.keys(tripsStore)[0];
+          appState.settings = tripsStore[currentTripId].settings;
+          appState.expenses = tripsStore[currentTripId].expenses || [];
+        }
+
         renderTripSelectDropdown();
       }
 

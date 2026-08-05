@@ -23,12 +23,27 @@
       <p class="lock-subtitle">請輸入存取密碼以開啟記帳內容<br><small style="color:var(--primary); font-weight:600;">(預設密碼：1234)</small></p>
       
       <form id="form-login" class="lock-form">
+        <!-- 🧳 多行程選擇下拉選單 -->
+        <div class="form-group" style="text-align: left; margin-bottom: 4px;">
+          <label for="select-login-trip" style="color:var(--text-sub);"><i class="fa-solid fa-plane-departure"></i> 選擇旅遊行程</label>
+          <select id="select-login-trip" class="select-trip-dropdown" style="width:100%; padding:12px; background:var(--bg-input); color:white; border:1px solid var(--border-color); border-radius:var(--radius-md); font-size:0.95rem;">
+            <!-- 動態注入多個行程 -->
+          </select>
+        </div>
+
         <div class="password-input-wrapper">
-          <input type="password" id="input-lock-password" placeholder="請輸入密碼" required autofocus autocomplete="current-password">
+          <input type="password" id="input-lock-password" placeholder="請輸入該行程密碼" required autofocus autocomplete="current-password">
           <button type="button" id="btn-toggle-pwd" class="btn-toggle-pwd"><i class="fa-regular fa-eye"></i></button>
         </div>
         <div id="lock-error-msg" class="lock-error-msg"></div>
-        <button type="submit" class="btn-primary btn-unlock"><i class="fa-solid fa-key"></i> 解鎖存取</button>
+        
+        <button type="submit" class="btn-primary btn-unlock"><i class="fa-solid fa-key"></i> 解鎖開啟行程</button>
+
+        <div style="margin-top: 12px; border-top: 1px solid var(--border-color); padding-top: 12px;">
+          <button type="button" id="btn-create-new-trip-login" class="btn-secondary" style="width:100%; font-size:0.85rem; padding:10px;">
+            <i class="fa-solid fa-plus-circle"></i> 建立新旅遊行程
+          </button>
+        </div>
       </form>
     </div>
   </div>
@@ -41,9 +56,14 @@
           <span class="trip-badge" id="trip-badge-currency">TWD</span>
           <h1 class="trip-name" id="display-trip-name">東京快樂之旅 🎌</h1>
         </div>
-        <button class="icon-btn" id="btn-open-settings" aria-label="設定">
-          <i class="fa-solid fa-gear"></i>
-        </button>
+        <div style="display:flex; gap:8px;">
+          <button class="icon-btn" id="btn-lock-app" title="鎖定 / 切換行程">
+            <i class="fa-solid fa-lock"></i>
+          </button>
+          <button class="icon-btn" id="btn-open-settings" aria-label="設定">
+            <i class="fa-solid fa-gear"></i>
+          </button>
+        </div>
       </div>
 
       <!-- 總覽卡片 (Glassmorphism Card) -->
@@ -298,6 +318,13 @@
             <label for="setting-app-password"><i class="fa-solid fa-lock"></i> 網頁存取密碼</label>
             <input type="text" id="setting-app-password" placeholder="留空代表不設密碼">
             <small class="help-text">設定後，開啟網頁需輸入此密碼解鎖。</small>
+          </div>
+
+          <!-- 自訂信用卡列表 -->
+          <div class="form-group">
+            <label for="setting-credit-cards"><i class="fa-solid fa-credit-card"></i> 自訂信用卡列表 (用逗點分隔)</label>
+            <input type="text" id="setting-credit-cards" placeholder="玉山FlyGo, 富邦J卡, 國泰CUBE, 吉鶴卡">
+            <small class="help-text">新增記帳時可在「付款方式」下拉選單中直接點選。</small>
           </div>
 
           <hr class="divider">

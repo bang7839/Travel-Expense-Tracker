@@ -1,20 +1,29 @@
 /**
- * TravelPay - 旅遊記帳前端核心 Logic (app.js)
+ * TravelPay - 旅遊記帳前端核心 Logic (app.js) - 多行程支援版
  */
 
-// 預設資料結構與 State
-const DEFAULT_SETTINGS = {
-  tripName: "東京快樂之旅 🎌",
-  baseCurrency: "TWD",
-  foreignCurrency: "JPY",
-  exchangeRate: 0.215, // 1 JPY = 0.215 TWD
-  members: ["小明", "小美", "阿強"],
-  gasUrl: "",
-  appPassword: "1234" // 預設密碼設為 1234 (可至設定中更改)
-};
+// 預設單一行程結構
+const CREATE_DEFAULT_TRIP = (id = "trip_tokyo", name = "東京快樂之旅 🎌", pwd = "1234") => ({
+  id: id,
+  settings: {
+    tripName: name,
+    baseCurrency: "TWD",
+    foreignCurrency: "JPY",
+    exchangeRate: 0.215, // 1 JPY = 0.215 TWD
+    members: ["小明", "小美", "阿強"],
+    creditCards: ["玉山FlyGo", "富邦J卡", "國泰CUBE", "吉鶴卡"],
+    gasUrl: "",
+    appPassword: pwd
+  },
+  expenses: []
+});
+
+// 全域 Multi-Trip State
+let tripsStore = {};
+let currentTripId = "trip_tokyo";
 
 let appState = {
-  settings: { ...DEFAULT_SETTINGS },
+  settings: null,
   expenses: [],
   currentCategoryFilter: "all",
   activeTab: "tab-records",
@@ -24,52 +33,105 @@ let appState = {
 // 初始化 App
 document.addEventListener("DOMContentLoaded", () => {
   loadLocalStorage();
+  renderTripSelectDropdown();
   initEventListeners();
   checkPasswordLockStatus();
 
   // 設定預設日期為今天
   document.getElementById("expense-date").value = new Date().toISOString().split("T")[0];
-
-  // 若填寫了 Google Apps Script API 且已解鎖，嘗試同步
-  if (appState.settings.gasUrl && appState.isUnlocked) {
-    syncFromGoogleSheets();
-  }
 });
+
+// 1. 本地 LocalStorage 管理 (多行程)
+function loadLocalStorage() {
+  const savedTrips = localStorage.getItem("travelpay_trips_store");
+  const savedCurrentId = localStorage.getItem("travelpay_current_trip_id");
+
+  if (savedTrips) {
+    try {
+      tripsStore = JSON.parse(savedTrips);
+    } catch(e) {
+      tripsStore = {};
+    }
+  }
+
+  // 若無行程，初始化一個預設行程
+  if (Object.keys(tripsStore).length === 0) {
+    const defaultTrip = CREATE_DEFAULT_TRIP();
+    tripsStore[defaultTrip.id] = defaultTrip;
+  }
+
+  // 移轉舊單行程資料（相容性）
+  const oldSettings = localStorage.getItem("travelpay_settings");
+  const oldExpenses = localStorage.getItem("travelpay_expenses");
+  if (oldSettings && !savedTrips) {
+    const parsed = JSON.parse(oldSettings);
+    tripsStore["trip_default"] = {
+      id: "trip_default",
+      settings: parsed,
+      expenses: oldExpenses ? JSON.parse(oldExpenses) : []
+    };
+    currentTripId = "trip_default";
+  } else if (savedCurrentId && tripsStore[savedCurrentId]) {
+    currentTripId = savedCurrentId;
+  } else {
+    currentTripId = Object.keys(tripsStore)[0];
+  }
+
+  activeTrip(currentTripId);
+}
+
+function activeTrip(tripId) {
+  if (!tripsStore[tripId]) return;
+  currentTripId = tripId;
+  appState.settings = tripsStore[tripId].settings;
+  appState.expenses = tripsStore[tripId].expenses || [];
+  localStorage.setItem("travelpay_current_trip_id", currentTripId);
+}
+
+function saveLocalStorage() {
+  if (tripsStore[currentTripId]) {
+    tripsStore[currentTripId].settings = appState.settings;
+    tripsStore[currentTripId].expenses = appState.expenses;
+  }
+  localStorage.setItem("travelpay_trips_store", JSON.stringify(tripsStore));
+  localStorage.setItem("travelpay_current_trip_id", currentTripId);
+}
+
+// 登入畫面渲染行程選單
+function renderTripSelectDropdown() {
+  const select = document.getElementById("select-login-trip");
+  select.innerHTML = "";
+
+  Object.values(tripsStore).forEach(trip => {
+    const opt = document.createElement("option");
+    opt.value = trip.id;
+    opt.textContent = `${trip.settings.tripName} ${trip.settings.appPassword ? '🔒' : '🔓'}`;
+    if (trip.id === currentTripId) {
+      opt.selected = true;
+    }
+    select.appendChild(opt);
+  });
+}
 
 function checkPasswordLockStatus() {
   const lockOverlay = document.getElementById("lock-screen");
   const appContainer = document.getElementById("app");
 
+  renderTripSelectDropdown();
+
   if (!appState.settings.appPassword) {
-    // 未設置密碼，直接進入
+    // 該行程未設置密碼，直接開啟
     appState.isUnlocked = true;
     lockOverlay.classList.add("unlocked");
     appContainer.classList.remove("app-locked");
     renderApp();
+    if (appState.settings.gasUrl) syncFromGoogleSheets();
   } else {
-    // 需輸入密碼
+    // 需輸入該行程的密碼
     appState.isUnlocked = false;
     lockOverlay.classList.remove("unlocked");
     appContainer.classList.add("app-locked");
   }
-}
-
-// 1. 本地 LocalStorage 管理
-function loadLocalStorage() {
-  const savedSettings = localStorage.getItem("travelpay_settings");
-  const savedExpenses = localStorage.getItem("travelpay_expenses");
-  
-  if (savedSettings) {
-    appState.settings = { ...DEFAULT_SETTINGS, ...JSON.parse(savedSettings) };
-  }
-  if (savedExpenses) {
-    appState.expenses = JSON.parse(savedExpenses);
-  }
-}
-
-function saveLocalStorage() {
-  localStorage.setItem("travelpay_settings", JSON.stringify(appState.settings));
-  localStorage.setItem("travelpay_expenses", JSON.stringify(appState.expenses));
 }
 
 // 2. Google Apps Script 雲端同步
@@ -363,7 +425,16 @@ function renderStats() {
 
 // 4. 事件監聽設定 (Event Listeners)
 function initEventListeners() {
-  // 解鎖表單送出
+  // 切換選取的行程
+  document.getElementById("select-login-trip").addEventListener("change", (e) => {
+    const selectedId = e.target.value;
+    activeTrip(selectedId);
+    document.getElementById("input-lock-password").value = "";
+    document.getElementById("lock-error-msg").textContent = "";
+    checkPasswordLockStatus();
+  });
+
+  // 登入解鎖表單送出
   document.getElementById("form-login").addEventListener("submit", (e) => {
     e.preventDefault();
     const inputPwd = document.getElementById("input-lock-password").value;
@@ -384,6 +455,33 @@ function initEventListeners() {
       errorEl.textContent = "❌ 密碼錯誤，請重新輸入";
       document.getElementById("input-lock-password").select();
     }
+  });
+
+  // 建立新行程
+  document.getElementById("btn-create-new-trip-login").addEventListener("click", () => {
+    const tripName = prompt("請輸入新行程名稱（例如：大阪自由行 🍡）：");
+    if (!tripName || !tripName.trim()) return;
+
+    const pwd = prompt("請設定此新行程的解鎖密碼（留空代表不設密碼）：", "1234");
+    if (pwd === null) return;
+
+    const newId = `trip_${Date.now()}`;
+    const newTrip = CREATE_DEFAULT_TRIP(newId, tripName.trim(), pwd.trim());
+    
+    tripsStore[newId] = newTrip;
+    activeTrip(newId);
+    saveLocalStorage();
+    
+    renderTripSelectDropdown();
+    checkPasswordLockStatus();
+
+    alert(`🎉 成功建立「${tripName.trim()}」！`);
+  });
+
+  // 手動鎖定 / 切換行程
+  document.getElementById("btn-lock-app").addEventListener("click", () => {
+    appState.isUnlocked = false;
+    checkPasswordLockStatus();
   });
 
   // 密碼顯示/隱藏切換
@@ -508,6 +606,36 @@ function openAddExpenseModal() {
     paidBySelect.appendChild(opt);
   });
 
+  // 動態填寫付款方式 (包含自訂信用卡列表)
+  const payMethodSelect = document.getElementById("expense-pay-method");
+  payMethodSelect.innerHTML = "";
+  
+  // 1. 現金
+  const optCash = document.createElement("option");
+  optCash.value = "現金";
+  optCash.textContent = "💵 現金";
+  payMethodSelect.appendChild(optCash);
+
+  // 2. 自訂信用卡列表
+  const cards = appState.settings.creditCards || ["玉山FlyGo", "富邦J卡", "國泰CUBE", "吉鶴卡"];
+  cards.forEach(card => {
+    const opt = document.createElement("option");
+    opt.value = `信用卡(${card})`;
+    opt.textContent = `💳 信用卡 (${card})`;
+    payMethodSelect.appendChild(opt);
+  });
+
+  // 3. 通用其他選項
+  const optOtherCard = document.createElement("option");
+  optOtherCard.value = "信用卡(其他)";
+  optOtherCard.textContent = "💳 信用卡 (其他)";
+  payMethodSelect.appendChild(optOtherCard);
+
+  const optPay = document.createElement("option");
+  optPay.value = "IC卡/Pay";
+  optPay.textContent = "📱 IC卡 / 街口 / LINE Pay";
+  payMethodSelect.appendChild(optPay);
+
   // 渲染分攤人員 Checkbox
   renderSplitMembersCheckboxes(appState.settings.members);
 
@@ -584,11 +712,14 @@ function deleteExpense(id) {
 }
 
 function openSettingsModal() {
+  const cards = appState.settings.creditCards || ["玉山FlyGo", "富邦J卡", "國泰CUBE", "吉鶴卡"];
+
   document.getElementById("setting-trip-name").value = appState.settings.tripName;
   document.getElementById("setting-base-currency").value = appState.settings.baseCurrency;
   document.getElementById("setting-exchange-rate").value = appState.settings.exchangeRate;
   document.getElementById("setting-members").value = appState.settings.members.join(", ");
   document.getElementById("setting-app-password").value = appState.settings.appPassword || "";
+  document.getElementById("setting-credit-cards").value = cards.join(", ");
   document.getElementById("setting-gas-url").value = appState.settings.gasUrl || "";
 
   document.getElementById("modal-settings").classList.add("active");
@@ -601,12 +732,17 @@ function saveSettingsFromForm() {
   const membersRaw = document.getElementById("setting-members").value;
   const members = membersRaw.split(/[,，]/).map(s => s.trim()).filter(Boolean);
   const appPassword = document.getElementById("setting-app-password").value.trim();
+  
+  const cardsRaw = document.getElementById("setting-credit-cards").value;
+  const creditCards = cardsRaw.split(/[,，]/).map(s => s.trim()).filter(Boolean);
+
   const gasUrl = document.getElementById("setting-gas-url").value.trim();
 
   appState.settings = {
     ...appState.settings,
     tripName, baseCurrency, exchangeRate,
     members: members.length > 0 ? members : ["我"],
+    creditCards: creditCards.length > 0 ? creditCards : ["預設卡"],
     appPassword,
     gasUrl
   };

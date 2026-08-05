@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>TravelPay 旅遊記帳本</title>
+  <title>旅遊記帳本</title>
   <!-- Google Fonts & FontAwesome -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -19,7 +19,7 @@
       <div class="lock-icon">
         <i class="fa-solid fa-lock"></i>
       </div>
-      <h2>TravelPay 旅遊記帳本</h2>
+      <h2>旅遊記帳本</h2>
       <p class="lock-subtitle">請輸入存取密碼以開啟記帳內容<br><small style="color:var(--primary); font-weight:600;">(預設密碼：1234)</small></p>
       
       <form id="form-login" class="lock-form">
@@ -361,6 +361,28 @@
             <button type="button" class="btn-secondary" id="btn-sync-now"><i class="fa-solid fa-rotate"></i> 手動同步</button>
             <button type="button" class="btn-primary" id="btn-save-settings">儲存設定</button>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal 3: 自訂訊息/確認對話框 (Custom Dialog Modal) -->
+    <div class="modal-overlay" id="modal-custom-dialog" style="align-items:center; z-index:2000;">
+      <div class="modal-card" style="border-radius:24px; max-width:360px; padding:24px; text-align:center; transform:none;">
+        <div id="dialog-icon" style="font-size:2.5rem; margin-bottom:12px; color:var(--primary);">
+          <i class="fa-solid fa-circle-info"></i>
+        </div>
+        <h3 id="dialog-title" style="font-size:1.15rem; font-weight:700; margin-bottom:8px;">提示</h3>
+        <p id="dialog-message" style="font-size:0.9rem; color:var(--text-sub); margin-bottom:20px; line-height:1.5;"></p>
+
+        <!-- Prompt 額外輸入欄位 (隱藏預設) -->
+        <div id="dialog-prompt-container" style="display:none; margin-bottom:16px;">
+          <input type="text" id="dialog-prompt-input-1" placeholder="" style="width:100%; padding:10px; background:var(--bg-input); border:1px solid var(--border-color); border-radius:var(--radius-sm); color:white; margin-bottom:8px;">
+          <input type="text" id="dialog-prompt-input-2" placeholder="" style="width:100%; padding:10px; background:var(--bg-input); border:1px solid var(--border-color); border-radius:var(--radius-sm); color:white; display:none;">
+        </div>
+
+        <div class="modal-footer-btns" id="dialog-buttons">
+          <button type="button" class="btn-secondary" id="btn-dialog-cancel">取消</button>
+          <button type="button" class="btn-primary" id="btn-dialog-confirm">確定</button>
         </div>
       </div>
     </div>

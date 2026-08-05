@@ -507,18 +507,12 @@ function initEventListeners() {
   }
 
   // 建立新行程
-  document.getElementById("btn-create-new-trip-login").addEventListener("click", () => {
-    const tripName = prompt("請輸入新行程名稱（例如：大阪自由行 🍡）：");
-    if (!tripName || !tripName.trim()) return;
-
-    const ownerPwd = prompt("請設定【擁有者密碼】（擁有修改設定與刪除行程全權）：", "1234");
-    if (ownerPwd === null) return;
-
-    const memberPwd = prompt("請設定【成員密碼】（僅能記帳與查看）：", "0000");
-    if (memberPwd === null) return;
+  document.getElementById("btn-create-new-trip-login").addEventListener("click", async () => {
+    const res = await showCreateTripModal();
+    if (!res || !res.name) return;
 
     const newId = `trip_${Date.now()}`;
-    const newTrip = CREATE_DEFAULT_TRIP(newId, tripName.trim(), ownerPwd.trim(), memberPwd.trim());
+    const newTrip = CREATE_DEFAULT_TRIP(newId, res.name, res.pwd, "0000");
     
     tripsStore[newId] = newTrip;
     activeTrip(newId);
@@ -527,7 +521,7 @@ function initEventListeners() {
     renderTripSelectDropdown();
     checkPasswordLockStatus();
 
-    alert(`🎉 成功建立「${tripName.trim()}」！`);
+    showCustomAlert("建立成功", `🎉 成功建立行程「${res.name}」！`, "fa-circle-check", "var(--accent)");
   });
 
   // 手動鎖定 / 返回首頁
@@ -759,19 +753,140 @@ function saveExpenseFromForm() {
   sendToGoogleSheets("add_expense", { expense: newExpense });
 }
 
-function deleteExpense(id) {
-  if (!confirm("確定要刪除這筆記帳紀錄嗎？")) return;
-  
-  appState.expenses = appState.expenses.filter(x => x.id !== id);
-  saveLocalStorage();
-  renderApp();
+// 自訂美化 Modal 替換原生 alert/confirm/prompt
+function showCustomAlert(title, message, iconClass = "fa-circle-info", iconColor = "var(--primary)") {
+  return new Promise((resolve) => {
+    const modal = document.getElementById("modal-custom-dialog");
+    document.getElementById("dialog-icon").innerHTML = `<i class="fa-solid ${iconClass}" style="color:${iconColor};"></i>`;
+    document.getElementById("dialog-title").textContent = title;
+    document.getElementById("dialog-message").textContent = message;
+    document.getElementById("dialog-prompt-container").style.display = "none";
 
-  sendToGoogleSheets("delete_expense", { id });
+    const btnConfirm = document.getElementById("btn-dialog-confirm");
+    const btnCancel = document.getElementById("btn-dialog-cancel");
+
+    btnCancel.style.display = "none";
+    btnConfirm.textContent = "我知道了";
+
+    const onConfirm = () => {
+      cleanup();
+      resolve(true);
+    };
+
+    const cleanup = () => {
+      btnConfirm.removeEventListener("click", onConfirm);
+      modal.classList.remove("active");
+    };
+
+    btnConfirm.addEventListener("click", onConfirm);
+    modal.classList.add("active");
+  });
+}
+
+function showCustomConfirm(title, message, iconClass = "fa-triangle-exclamation", iconColor = "#ef4444") {
+  return new Promise((resolve) => {
+    const modal = document.getElementById("modal-custom-dialog");
+    document.getElementById("dialog-icon").innerHTML = `<i class="fa-solid ${iconClass}" style="color:${iconColor};"></i>`;
+    document.getElementById("dialog-title").textContent = title;
+    document.getElementById("dialog-message").textContent = message;
+    document.getElementById("dialog-prompt-container").style.display = "none";
+
+    const btnConfirm = document.getElementById("btn-dialog-confirm");
+    const btnCancel = document.getElementById("btn-dialog-cancel");
+
+    btnCancel.style.display = "block";
+    btnCancel.textContent = "取消";
+    btnConfirm.textContent = "確定刪除";
+
+    const onConfirm = () => {
+      cleanup();
+      resolve(true);
+    };
+    const onCancel = () => {
+      cleanup();
+      resolve(false);
+    };
+
+    const cleanup = () => {
+      btnConfirm.removeEventListener("click", onConfirm);
+      btnCancel.removeEventListener("click", onCancel);
+      modal.classList.remove("active");
+    };
+
+    btnConfirm.addEventListener("click", onConfirm);
+    btnCancel.addEventListener("click", onCancel);
+    modal.classList.add("active");
+  });
+}
+
+function showCreateTripModal() {
+  return new Promise((resolve) => {
+    const modal = document.getElementById("modal-custom-dialog");
+    document.getElementById("dialog-icon").innerHTML = `<i class="fa-solid fa-plane-circle-plus" style="color:var(--accent);"></i>`;
+    document.getElementById("dialog-title").textContent = "建立新旅遊行程";
+    document.getElementById("dialog-message").textContent = "請輸入新行程名稱與雙層密碼：";
+
+    const promptContainer = document.getElementById("dialog-prompt-container");
+    const input1 = document.getElementById("dialog-prompt-input-1");
+    const input2 = document.getElementById("dialog-prompt-input-2");
+
+    promptContainer.style.display = "block";
+    input1.style.display = "block";
+    input1.placeholder = "行程名稱 (例如：大阪自由行 🍡)";
+    input1.value = "";
+
+    input2.style.display = "block";
+    input2.placeholder = "擁有者密碼 (預設1234)";
+    input2.value = "1234";
+
+    const btnConfirm = document.getElementById("btn-dialog-confirm");
+    const btnCancel = document.getElementById("btn-dialog-cancel");
+
+    btnCancel.style.display = "block";
+    btnCancel.textContent = "取消";
+    btnConfirm.textContent = "建立行程";
+
+    const onConfirm = () => {
+      const name = input1.value.trim();
+      const pwd = input2.value.trim() || "1234";
+      cleanup();
+      if (name) {
+        resolve({ name, pwd });
+      } else {
+        resolve(null);
+      }
+    };
+    const onCancel = () => {
+      cleanup();
+      resolve(null);
+    };
+
+    const cleanup = () => {
+      btnConfirm.removeEventListener("click", onConfirm);
+      btnCancel.removeEventListener("click", onCancel);
+      modal.classList.remove("active");
+    };
+
+    btnConfirm.addEventListener("click", onConfirm);
+    btnCancel.addEventListener("click", onCancel);
+    modal.classList.add("active");
+    input1.focus();
+  });
+}
+
+function deleteExpense(id) {
+  showCustomConfirm("刪除確認", "確定要刪除這筆記帳紀錄嗎？", "fa-trash-can", "#ef4444").then((confirmed) => {
+    if (!confirmed) return;
+    appState.expenses = appState.expenses.filter(x => x.id !== id);
+    saveLocalStorage();
+    renderApp();
+    sendToGoogleSheets("delete_expense", { id });
+  });
 }
 
 function openSettingsModal() {
   if (appState.currentUserRole !== "owner") {
-    alert("🔒 您當前是以【成員】身份登入，無權限查看或修改行程設定與刪除行程！\n請使用【擁有者密碼】登入。");
+    showCustomAlert("權限受限", "🔒 您當前是以【成員】身份登入，無權限查看或修改行程設定與刪除行程！\n請使用【擁有者密碼】登入。", "fa-lock", "#f59e0b");
     return;
   }
 
@@ -791,50 +906,15 @@ function openSettingsModal() {
   document.getElementById("modal-settings").classList.add("active");
 }
 
-function saveSettingsFromForm() {
-  if (appState.currentUserRole !== "owner") return;
-
-  const tripName = document.getElementById("setting-trip-name").value.trim() || "旅遊記帳";
-  const baseCurrency = document.getElementById("setting-base-currency").value;
-  const exchangeRate = parseFloat(document.getElementById("setting-exchange-rate").value) || 1;
-  const membersRaw = document.getElementById("setting-members").value;
-  const members = membersRaw.split(/[,，]/).map(s => s.trim()).filter(Boolean);
-  
-  const ownerPassword = document.getElementById("setting-owner-password").value.trim();
-  const memberPassword = document.getElementById("setting-member-password").value.trim();
-  
-  const cardsRaw = document.getElementById("setting-credit-cards").value;
-  const creditCards = cardsRaw.split(/[,，]/).map(s => s.trim()).filter(Boolean);
-
-  const gasUrl = document.getElementById("setting-gas-url").value.trim();
-  globalGasUrl = gasUrl; // 保存全域 Google API 網址
-
-  appState.settings = {
-    ...appState.settings,
-    tripName, baseCurrency, exchangeRate,
-    members: members.length > 0 ? members : ["我"],
-    creditCards: creditCards.length > 0 ? creditCards : ["預設卡"],
-    ownerPassword,
-    memberPassword,
-    gasUrl
-  };
-
-  saveLocalStorage();
-  renderApp();
-
-  document.getElementById("modal-settings").classList.remove("active");
-
-  sendToGoogleSheets("save_settings", { settings: appState.settings });
-}
-
-function deleteCurrentTrip() {
+async function deleteCurrentTrip() {
   if (appState.currentUserRole !== "owner") {
-    alert("🔒 只有擁有者才有權限刪除行程！");
+    showCustomAlert("權限受限", "🔒 只有擁有者才有權限刪除行程！", "fa-lock", "#f59e0b");
     return;
   }
 
   const tripName = appState.settings.tripName;
-  if (!confirm(`⚠️ 確定要永久刪除行程「${tripName}」及其所有消費紀錄嗎？`)) return;
+  const confirmed = await showCustomConfirm("刪除行程警告", `⚠️ 確定要永久刪除行程「${tripName}」及其所有消費紀錄嗎？`, "fa-trash-can", "#ef4444");
+  if (!confirmed) return;
 
   delete tripsStore[currentTripId];
   
@@ -855,7 +935,7 @@ function deleteCurrentTrip() {
   appState.currentUserRole = "guest";
   checkPasswordLockStatus();
 
-  alert(`🗑️ 已成功刪除行程「${tripName}」。`);
+  showCustomAlert("刪除成功", `🗑️ 已成功刪除行程「${tripName}」。`, "fa-circle-check", "var(--accent)");
 }
 
 function escapeHtml(str) {

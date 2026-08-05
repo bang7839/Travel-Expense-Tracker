@@ -296,16 +296,25 @@ function renderExpenseList() {
       ? `(約 NT$${Math.round(item.amount * appState.settings.exchangeRate)})`
       : "";
 
+    const hasAttachment = !!item.attachmentData;
+    const isImage = item.attachmentType && item.attachmentType.startsWith("image/");
+    const attachmentBtnHtml = hasAttachment 
+      ? `<button type="button" class="btn-attachment-badge" onclick="viewAttachment('${item.id}')" title="點擊檢視附件">
+          <i class="fa-solid ${isImage ? 'fa-image' : 'fa-paperclip'}"></i> ${isImage ? '相片' : '附件'}
+         </button>` 
+      : "";
+
     card.innerHTML = `
       <div class="expense-left">
         <div class="cat-icon">${catIconMap[item.category] || "💸"}</div>
         <div class="expense-info">
-          <div class="title">${escapeHtml(item.title)}</div>
+          <div class="title">${escapeHtml(item.title)} ${attachmentBtnHtml}</div>
           <div class="meta">
             <span>${item.date}</span>
             <span>• ${escapeHtml(item.paidBy)} 付款</span>
             <span class="badge-pay-method">${escapeHtml(item.paymentMethod || '現金')}</span>
           </div>
+          ${item.note ? `<div class="expense-note-text"><i class="fa-regular fa-sticky-note"></i> ${escapeHtml(item.note)}</div>` : ''}
         </div>
       </div>
       <div class="expense-right">
@@ -608,6 +617,68 @@ function initEventListeners() {
     splitAllBtn.classList.remove("active");
   });
 
+  // 觸發選擇附件
+  const fileInput = document.getElementById("expense-attachment-input");
+  document.getElementById("btn-trigger-upload").addEventListener("click", () => {
+    fileInput.click();
+  });
+
+  fileInput.addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    // 限制檔案大小不大於 5MB
+    if (file.size > 5 * 1024 * 1024) {
+      showCustomAlert("檔案太大", "上傳的附件大小不能超過 5MB！", "fa-triangle-exclamation", "#ef4444");
+      fileInput.value = "";
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const base64Data = event.target.result;
+      document.getElementById("expense-attachment-data").value = base64Data;
+      document.getElementById("expense-attachment-name").value = file.name;
+      document.getElementById("expense-attachment-type").value = file.type;
+
+      document.getElementById("btn-remove-attachment").style.display = "inline-block";
+      const prevContainer = document.getElementById("attachment-preview-container");
+      prevContainer.style.display = "block";
+
+      if (file.type.startsWith("image/")) {
+        prevContainer.innerHTML = `
+          <div style="position:relative; display:inline-block;">
+            <img src="${base64Data}" style="max-width:120px; max-height:120px; border-radius:8px; border:1px solid var(--border-color); object-fit:cover;">
+            <small style="display:block; font-size:0.75rem; color:var(--text-muted); text-align:center; margin-top:2px;">${escapeHtml(file.name)}</small>
+          </div>`;
+      } else {
+        prevContainer.innerHTML = `
+          <div style="background:var(--bg-input); padding:8px 12px; border-radius:8px; display:inline-flex; align-items:center; gap:8px; font-size:0.85rem;">
+            <i class="fa-solid fa-file-lines" style="color:var(--primary);"></i>
+            <span>${escapeHtml(file.name)}</span>
+          </div>`;
+      }
+    };
+    reader.readAsDataURL(file);
+  });
+
+  // 移除附件
+  document.getElementById("btn-remove-attachment").addEventListener("click", () => {
+    fileInput.value = "";
+    document.getElementById("expense-attachment-data").value = "";
+    document.getElementById("expense-attachment-name").value = "";
+    document.getElementById("expense-attachment-type").value = "";
+    document.getElementById("btn-remove-attachment").style.display = "none";
+    const prevContainer = document.getElementById("attachment-preview-container");
+    prevContainer.style.display = "none";
+    prevContainer.innerHTML = "";
+  });
+
+  // 關閉多媒體檢視器 Modal
+  document.getElementById("btn-close-media-viewer").addEventListener("click", () => {
+    document.getElementById("modal-media-viewer").classList.remove("active");
+  });
+
   // 提交記帳表單
   document.getElementById("form-expense").addEventListener("submit", (e) => {
     e.preventDefault();
@@ -688,6 +759,16 @@ function openAddExpenseModal() {
   optPay.textContent = "📱 IC卡 / 街口 / LINE Pay";
   payMethodSelect.appendChild(optPay);
 
+  // 重設附件區塊
+  document.getElementById("expense-attachment-input").value = "";
+  document.getElementById("expense-attachment-data").value = "";
+  document.getElementById("expense-attachment-name").value = "";
+  document.getElementById("expense-attachment-type").value = "";
+  document.getElementById("btn-remove-attachment").style.display = "none";
+  const prevContainer = document.getElementById("attachment-preview-container");
+  prevContainer.style.display = "none";
+  prevContainer.innerHTML = "";
+
   // 渲染分攤人員 Checkbox
   renderSplitMembersCheckboxes(appState.settings.members);
 
@@ -727,6 +808,11 @@ function saveExpenseFromForm() {
   const paymentMethod = document.getElementById("expense-pay-method").value;
   const date = document.getElementById("expense-date").value;
   const note = document.getElementById("expense-note").value.trim();
+
+  // 附件資料
+  const attachmentData = document.getElementById("expense-attachment-data").value;
+  const attachmentName = document.getElementById("expense-attachment-name").value;
+  const attachmentType = document.getElementById("expense-attachment-type").value;
 
   // 選取的指定分攤人員
   const checkedBoxes = document.querySelectorAll("#split-members-checkboxes input[type='checkbox']:checked");
@@ -824,38 +910,54 @@ function showCreateTripModal() {
     const modal = document.getElementById("modal-custom-dialog");
     document.getElementById("dialog-icon").innerHTML = `<i class="fa-solid fa-plane-circle-plus" style="color:var(--accent);"></i>`;
     document.getElementById("dialog-title").textContent = "建立新旅遊行程";
-    document.getElementById("dialog-message").textContent = "請輸入新行程名稱與雙層密碼：";
+    document.getElementById("dialog-message").textContent = "請輸入管理者驗證密碼、新行程名稱與新行程管理者密碼：";
 
     const promptContainer = document.getElementById("dialog-prompt-container");
     const input1 = document.getElementById("dialog-prompt-input-1");
     const input2 = document.getElementById("dialog-prompt-input-2");
 
     promptContainer.style.display = "block";
+    
+    // input1 用於輸入「管理者驗證密碼」
     input1.style.display = "block";
-    input1.placeholder = "行程名稱 (例如：大阪自由行 🍡)";
+    input1.type = "password";
+    input1.placeholder = "請輸入目前行程的管理者密碼 (預設1234)";
     input1.value = "";
 
+    // input2 用於輸入「新行程名稱」
     input2.style.display = "block";
-    input2.placeholder = "擁有者密碼 (預設1234)";
-    input2.value = "1234";
+    input2.type = "text";
+    input2.placeholder = "新行程名稱 (例如：大阪自由行 🍡)";
+    input2.value = "";
 
     const btnConfirm = document.getElementById("btn-dialog-confirm");
     const btnCancel = document.getElementById("btn-dialog-cancel");
 
     btnCancel.style.display = "block";
     btnCancel.textContent = "取消";
-    btnConfirm.textContent = "建立行程";
+    btnConfirm.textContent = "驗證並建立";
 
     const onConfirm = () => {
-      const name = input1.value.trim();
-      const pwd = input2.value.trim() || "1234";
+      const verifyPwd = input1.value.trim();
+      const name = input2.value.trim();
+      const currentOwnerPwd = appState.settings ? (appState.settings.ownerPassword || "1234") : "1234";
+
+      if (verifyPwd !== currentOwnerPwd) {
+        cleanup();
+        showCustomAlert("權限受限", "🔒 管理者密碼錯誤！只有【管理者/擁有者】才能建立新行程。", "fa-lock", "#ef4444");
+        resolve(null);
+        return;
+      }
+
       cleanup();
       if (name) {
-        resolve({ name, pwd });
+        resolve({ name, pwd: verifyPwd });
       } else {
+        showCustomAlert("提示", "行程名稱不能留空！", "fa-triangle-exclamation", "#f59e0b");
         resolve(null);
       }
     };
+
     const onCancel = () => {
       cleanup();
       resolve(null);

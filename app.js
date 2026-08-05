@@ -10,7 +10,7 @@ const DEFAULT_SETTINGS = {
   exchangeRate: 0.215, // 1 JPY = 0.215 TWD
   members: ["小明", "小美", "阿強"],
   gasUrl: "",
-  appPassword: "" // 密碼保護 (空白表示未設置)
+  appPassword: "1234" // 預設密碼設為 1234 (可至設定中更改)
 };
 
 let appState = {

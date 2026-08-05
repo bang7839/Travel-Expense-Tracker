@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>TravelPay 旅遊記帳本</title>
+  <!-- Google Fonts & FontAwesome -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- 🔐 密碼保護解鎖畫面 -->
+  <div id="lock-screen" class="lock-screen-overlay">
+    <div class="lock-card">
+      <div class="lock-icon">
+        <i class="fa-solid fa-lock"></i>
+      </div>
+      <h2>TravelPay 旅遊記帳本</h2>
+      <p class="lock-subtitle">請輸入存取密碼以開啟記帳內容</p>
+      
+      <form id="form-login" class="lock-form">
+        <div class="password-input-wrapper">
+          <input type="password" id="input-lock-password" placeholder="請輸入密碼" required autofocus autocomplete="current-password">
+          <button type="button" id="btn-toggle-pwd" class="btn-toggle-pwd"><i class="fa-regular fa-eye"></i></button>
+        </div>
+        <div id="lock-error-msg" class="lock-error-msg"></div>
+        <button type="submit" class="btn-primary btn-unlock"><i class="fa-solid fa-key"></i> 解鎖存取</button>
+      </form>
+    </div>
+  </div>
+
+  <div id="app" class="app-container app-locked">
+    <!-- 頂部 Header -->
+    <header class="app-header">
+      <div class="header-top">
+        <div class="trip-info">
+          <span class="trip-badge" id="trip-badge-currency">TWD</span>
+          <h1 class="trip-name" id="display-trip-name">東京快樂之旅 🎌</h1>
+        </div>
+        <button class="icon-btn" id="btn-open-settings" aria-label="設定">
+          <i class="fa-solid fa-gear"></i>
+        </button>
+      </div>
+
+      <!-- 總覽卡片 (Glassmorphism Card) -->
+      <div class="summary-card">
+        <div class="summary-row">
+          <div class="summary-item">
+            <span class="label">總支出 (TWD)</span>
+            <span class="amount-main" id="total-expense-base">$0</span>
+          </div>
+          <div class="summary-item right">
+            <span class="label">外幣累積</span>
+            <span class="amount-sub" id="total-expense-foreign">¥0</span>
+          </div>
+        </div>
+        <div class="summary-footer">
+          <span id="sync-status-indicator" class="status-offline">
+            <i class="fa-solid fa-cloud-slash"></i> 本地儲存
+          </span>
+          <button class="btn-settle-quick" id="btn-quick-settle">
+            <i class="fa-solid fa-calculator"></i> 分攤結算
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- 主體內容區塊 -->
+    <main class="main-content">
+      <!-- 分頁：明細 (Expense List) -->
+      <section id="tab-records" class="tab-panel active">
+        <!-- 分類快速過濾篩選器 -->
+        <div class="filter-bar">
+          <button class="filter-chip active" data-cat="all">全部</button>
+          <button class="filter-chip" data-cat="餐飲">🍔 餐飲</button>
+          <button class="filter-chip" data-cat="交通">🚗 交通</button>
+          <button class="filter-chip" data-cat="住宿">🏨 住宿</button>
+          <button class="filter-chip" data-cat="購物">🛍️ 購物</button>
+          <button class="filter-chip" data-cat="門票">🎟️ 門票</button>
+          <button class="filter-chip" data-cat="其他">🎈 其他</button>
+        </div>
+
+        <!-- 支出清單列表 -->
+        <div class="expense-list" id="expense-list-container">
+          <div class="empty-state">
+            <i class="fa-solid fa-receipt"></i>
+            <p>尚無記帳紀錄</p>
+            <small>點擊下方「＋」開始新增第一筆消費吧！</small>
+          </div>
+        </div>
+      </section>
+
+      <!-- 分頁：結算 (Settlement) -->
+      <section id="tab-settlement" class="tab-panel">
+        <div class="settle-card">
+          <h3><i class="fa-solid fa-hand-holding-dollar"></i> 成員付款與分攤概況</h3>
+          <div id="members-balance-list" class="members-balance-list">
+            <!-- 動態渲染成員支付與應付 -->
+          </div>
+        </div>
+
+        <div class="settle-card suggestion-box">
+          <h3><i class="fa-solid fa-arrow-right-arrow-left"></i> 最省心結算方案</h3>
+          <div id="settlement-suggestions" class="suggestions-list">
+            <!-- 動態渲染算好的轉帳金額建議 -->
+          </div>
+        </div>
+      </section>
+
+      <!-- 分頁：統計 (Stats) -->
+      <section id="tab-stats" class="tab-panel">
+        <div class="stats-card">
+          <h3><i class="fa-solid fa-chart-pie"></i> 分類花費佔比</h3>
+          <div id="category-chart-container" class="chart-box">
+            <!-- 簡易進度條式分類圖表 -->
+          </div>
+        </div>
+
+        <div class="stats-card">
+          <h3><i class="fa-solid fa-wallet"></i> 付款方式統計 (現金 vs 信用卡)</h3>
+          <div id="payment-method-chart-container" class="chart-box">
+            <!-- 支付方式統計 -->
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- 底部導覽列 (Bottom Nav) -->
+    <nav class="bottom-nav">
+      <button class="nav-item active" data-tab="tab-records">
+        <i class="fa-solid fa-list-ul"></i>
+        <span>明細</span>
+      </button>
+      <button class="nav-item" data-tab="tab-settlement">
+        <i class="fa-solid fa-scale-balanced"></i>
+        <span>結算</span>
+      </button>
+
+      <!-- 懸浮新增按鈕 (FAB) -->
+      <div class="fab-wrapper">
+        <button class="fab-btn" id="btn-add-expense" aria-label="新增記帳">
+          <i class="fa-solid fa-plus"></i>
+        </button>
+      </div>
+
+      <button class="nav-item" data-tab="tab-stats">
+        <i class="fa-solid fa-chart-column"></i>
+        <span>統計</span>
+      </button>
+      <button class="nav-item" id="btn-nav-settings">
+        <i class="fa-solid fa-gear"></i>
+        <span>設定</span>
+      </button>
+    </nav>
+
+    <!-- Modal 1: 新增 / 編輯消費彈窗 -->
+    <div class="modal-overlay" id="modal-expense">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h2 id="modal-title">新增消費</h2>
+          <button class="btn-close-modal" id="btn-close-expense-modal">&times;</button>
+        </div>
+        
+        <form id="form-expense" class="form-body">
+          <input type="hidden" id="expense-id">
+          
+          <!-- 金額與幣別 -->
+          <div class="amount-input-group">
+            <select id="expense-currency" class="select-currency">
+              <option value="JPY">JPY ¥</option>
+              <option value="TWD">TWD $</option>
+              <option value="KRW">KRW ₩</option>
+              <option value="USD">USD $</option>
+              <option value="EUR">EUR €</option>
+              <option value="THB">THB ฿</option>
+            </select>
+            <input type="number" step="0.01" id="expense-amount" placeholder="0" required class="input-amount" autofocus>
+          </div>
+
+          <!-- 款項名稱 -->
+          <div class="form-group">
+            <label for="expense-name"><i class="fa-solid fa-pen"></i> 消費名稱</label>
+            <input type="text" id="expense-name" placeholder="例如：一蘭拉麵、迪士尼門票" required>
+          </div>
+
+          <!-- 分類選擇 -->
+          <div class="form-group">
+            <label><i class="fa-solid fa-tags"></i> 分類</label>
+            <div class="category-selector" id="category-selector">
+              <button type="button" class="cat-btn active" data-val="餐飲">🍔 餐飲</button>
+              <button type="button" class="cat-btn" data-val="交通">🚗 交通</button>
+              <button type="button" class="cat-btn" data-val="住宿">🏨 住宿</button>
+              <button type="button" class="cat-btn" data-val="購物">🛍️ 購物</button>
+              <button type="button" class="cat-btn" data-val="門票">🎟️ 門票</button>
+              <button type="button" class="cat-btn" data-val="其他">🎈 其他</button>
+            </div>
+            <input type="hidden" id="expense-category" value="餐飲">
+          </div>
+
+          <!-- 2欄排版：付款人 與 付款方式 -->
+          <div class="form-row-2">
+            <div class="form-group">
+              <label for="expense-paid-by"><i class="fa-solid fa-user-check"></i> 誰先付的</label>
+              <select id="expense-paid-by" required>
+                <!-- 動態注入成員 -->
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="expense-pay-method"><i class="fa-solid fa-credit-card"></i> 付款方式</label>
+              <select id="expense-pay-method" required>
+                <option value="現金">💵 現金</option>
+                <option value="信用卡(玉山FlyGo)">💳 信用卡 (玉山FlyGo)</option>
+                <option value="信用卡(富邦J卡)">💳 信用卡 (富邦J卡)</option>
+                <option value="信用卡(吉鶴卡)">💳 信用卡 (吉鶴卡)</option>
+                <option value="信用卡(國泰CUBE)">💳 信用卡 (國泰CUBE)</option>
+                <option value="信用卡(中信LINE Pay)">💳 信用卡 (中信LINE Pay)</option>
+                <option value="信用卡(其他)">💳 信用卡 (其他)</option>
+                <option value="IC卡/Pay">📱 IC卡 / 街口 / LINE Pay</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- 分攤人員選取 -->
+          <div class="form-group">
+            <label><i class="fa-solid fa-users"></i> 分攤對象</label>
+            <div class="split-type-toggle">
+              <button type="button" class="split-tab active" id="split-all-btn">全員平分</button>
+              <button type="button" class="split-tab" id="split-custom-btn">指定人員</button>
+            </div>
+            <div class="split-members-list" id="split-members-checkboxes">
+              <!-- 動態生成勾選框 -->
+            </div>
+          </div>
+
+          <!-- 日期與備註 -->
+          <div class="form-group">
+            <label for="expense-date"><i class="fa-regular fa-calendar"></i> 日期</label>
+            <input type="date" id="expense-date" required>
+          </div>
+
+          <div class="form-group">
+            <label for="expense-note"><i class="fa-regular fa-sticky-note"></i> 備註 (可選)</label>
+            <input type="text" id="expense-note" placeholder="如：含卡費回饋、收據相片記號">
+          </div>
+
+          <div class="modal-footer-btns">
+            <button type="button" class="btn-secondary" id="btn-cancel-expense">取消</button>
+            <button type="submit" class="btn-primary" id="btn-save-expense">儲存筆記</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Modal 2: 設定 (Settings) 彈窗 -->
+    <div class="modal-overlay" id="modal-settings">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h2><i class="fa-solid fa-sliders"></i> 行程與資料庫設定</h2>
+          <button class="btn-close-modal" id="btn-close-settings-modal">&times;</button>
+        </div>
+
+        <div class="form-body">
+          <!-- 旅程基本資料 -->
+          <div class="form-group">
+            <label for="setting-trip-name">旅程名稱</label>
+            <input type="text" id="setting-trip-name" placeholder="例如：東京 5 天 4 夜賞櫻">
+          </div>
+
+          <div class="form-row-2">
+            <div class="form-group">
+              <label for="setting-base-currency">主幣別 (結算用)</label>
+              <select id="setting-base-currency">
+                <option value="TWD">TWD 新台幣</option>
+                <option value="HKD">HKD 港幣</option>
+                <option value="USD">USD 美金</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="setting-exchange-rate">匯率 (1外幣 = 多少台幣)</label>
+              <input type="number" step="0.0001" id="setting-exchange-rate" placeholder="0.215">
+            </div>
+          </div>
+
+          <!-- 成員管理 -->
+          <div class="form-group">
+            <label>成員名單 (用逗點分隔)</label>
+            <input type="text" id="setting-members" placeholder="小明, 小美, 阿強">
+            <small class="help-text">提示：變更成員名稱會同步更新後續選擇清單。</small>
+          </div>
+
+          <!-- 密碼保護設定 -->
+          <div class="form-group">
+            <label for="setting-app-password"><i class="fa-solid fa-lock"></i> 網頁存取密碼</label>
+            <input type="text" id="setting-app-password" placeholder="留空代表不設密碼">
+            <small class="help-text">設定後，開啟網頁需輸入此密碼解鎖。</small>
+          </div>
+
+          <hr class="divider">
+
+          <!-- Google Sheet 網址設定 -->
+          <div class="form-group">
+            <label for="setting-gas-url"><i class="fa-solid fa-file-excel"></i> Google Sheet API 網址</label>
+            <input type="url" id="setting-gas-url" placeholder="https://script.google.com/macros/s/.../exec">
+            <small class="help-text">貼上 Google Apps Script 部署後的 Web App URL，開啟雲端自動同步！</small>
+          </div>
+
+          <div class="gas-tutorial-box">
+            <h4><i class="fa-solid fa-circle-info"></i> 如何建立 Google Sheet 資料庫？</h4>
+            <ol>
+              <li>新建一份 Google 試算表。</li>
+              <li>點擊選單「擴充功能」➔「Apps Script」。</li>
+              <li>貼上本專案提供的 <code>google_apps_script.js</code> 代碼並發布部署為 Web App。</li>
+            </ol>
+          </div>
+
+          <div class="modal-footer-btns">
+            <button type="button" class="btn-secondary" id="btn-sync-now"><i class="fa-solid fa-rotate"></i> 手動同步</button>
+            <button type="button" class="btn-primary" id="btn-save-settings">儲存設定</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -57,8 +57,8 @@
           <h1 class="trip-name" id="display-trip-name">東京快樂之旅 🎌</h1>
         </div>
         <div style="display:flex; gap:8px;">
-          <button class="icon-btn" id="btn-lock-app" title="鎖定 / 切換行程">
-            <i class="fa-solid fa-lock"></i>
+          <button class="icon-btn" id="btn-lock-app" title="返回首頁 / 切換行程">
+            <i class="fa-solid fa-house"></i>
           </button>
           <button class="icon-btn" id="btn-open-settings" aria-label="設定">
             <i class="fa-solid fa-gear"></i>
@@ -313,12 +313,18 @@
             <small class="help-text">提示：變更成員名稱會同步更新後續選擇清單。</small>
           </div>
 
-          <!-- 密碼保護設定 -->
-          <div class="form-group">
-            <label for="setting-app-password"><i class="fa-solid fa-lock"></i> 網頁存取密碼</label>
-            <input type="text" id="setting-app-password" placeholder="留空代表不設密碼">
-            <small class="help-text">設定後，開啟網頁需輸入此密碼解鎖。</small>
+          <!-- 雙層密碼保護設定 -->
+          <div class="form-row-2">
+            <div class="form-group">
+              <label for="setting-owner-password"><i class="fa-solid fa-crown" style="color:#f59e0b;"></i> 擁有者密碼</label>
+              <input type="text" id="setting-owner-password" placeholder="全權管理(預設1234)">
+            </div>
+            <div class="form-group">
+              <label for="setting-member-password"><i class="fa-solid fa-user-lock"></i> 成員密碼</label>
+              <input type="text" id="setting-member-password" placeholder="僅記帳(預設0000)">
+            </div>
           </div>
+          <small class="help-text" style="margin-top:-8px; margin-bottom:8px;">提示：成員密碼登入者僅能記帳與看帳，無法進入設定頁與刪除行程。</small>
 
           <!-- 自訂信用卡列表 -->
           <div class="form-group">
@@ -329,11 +335,11 @@
 
           <hr class="divider">
 
-          <!-- Google Sheet 網址設定 -->
+          <!-- 全域 Google Sheet 網址設定 -->
           <div class="form-group">
-            <label for="setting-gas-url"><i class="fa-solid fa-file-excel"></i> Google Sheet API 網址</label>
+            <label for="setting-gas-url"><i class="fa-solid fa-file-excel" style="color:#10b981;"></i> 全域 Google Sheet API 網址</label>
             <input type="url" id="setting-gas-url" placeholder="https://script.google.com/macros/s/.../exec">
-            <small class="help-text">貼上 Google Apps Script 部署後的 Web App URL，開啟雲端自動同步！</small>
+            <small class="help-text">所有行程共享此 API，數據會自動寫入同一份 Google 試算表。</small>
           </div>
 
           <div class="gas-tutorial-box">
@@ -343,6 +349,12 @@
               <li>點擊選單「擴充功能」➔「Apps Script」。</li>
               <li>貼上本專案提供的 <code>google_apps_script.js</code> 代碼並發布部署為 Web App。</li>
             </ol>
+          </div>
+
+          <div style="margin-top: 16px; padding-top: 12px; border-top: 1px dashed rgba(239,68,68,0.3);">
+            <button type="button" class="btn-secondary" id="btn-delete-current-trip" style="width:100%; color:#ef4444; border-color:rgba(239,68,68,0.3);">
+              <i class="fa-solid fa-trash-can"></i> 刪除此旅遊行程
+            </button>
           </div>
 
           <div class="modal-footer-btns">

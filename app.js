@@ -1003,6 +1003,46 @@ function openSettingsModal() {
   document.getElementById("modal-settings").classList.add("active");
 }
 
+function saveSettingsFromForm() {
+  if (appState.currentUserRole !== "owner") {
+    showCustomAlert("權限受限", "🔒 只有管理者才能儲存修改設定！", "fa-lock", "#ef4444");
+    return;
+  }
+
+  const tripName = document.getElementById("setting-trip-name").value.trim() || "旅遊記帳";
+  const baseCurrency = document.getElementById("setting-base-currency").value;
+  const exchangeRate = parseFloat(document.getElementById("setting-exchange-rate").value) || 1;
+  const membersRaw = document.getElementById("setting-members").value;
+  const members = membersRaw.split(/[,，]/).map(s => s.trim()).filter(Boolean);
+  
+  const ownerPassword = document.getElementById("setting-owner-password").value.trim();
+  const memberPassword = document.getElementById("setting-member-password").value.trim();
+  
+  const cardsRaw = document.getElementById("setting-credit-cards").value;
+  const creditCards = cardsRaw.split(/[,，]/).map(s => s.trim()).filter(Boolean);
+
+  const gasUrl = document.getElementById("setting-gas-url").value.trim();
+  globalGasUrl = gasUrl; // 保存全域 Google API 網址
+
+  appState.settings = {
+    ...appState.settings,
+    tripName, baseCurrency, exchangeRate,
+    members: members.length > 0 ? members : ["我"],
+    creditCards: creditCards.length > 0 ? creditCards : ["預設卡"],
+    ownerPassword,
+    memberPassword,
+    gasUrl
+  };
+
+  saveLocalStorage();
+  renderApp();
+
+  document.getElementById("modal-settings").classList.remove("active");
+  showCustomAlert("儲存成功", "🎉 設定已成功儲存！", "fa-circle-check", "var(--accent)");
+
+  sendToGoogleSheets("save_settings", { settings: appState.settings });
+}
+
 async function deleteCurrentTrip() {
   if (appState.currentUserRole !== "owner") {
     showCustomAlert("權限受限", "🔒 只有擁有者才有權限刪除行程！", "fa-lock", "#f59e0b");

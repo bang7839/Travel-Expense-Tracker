@@ -56,6 +56,12 @@
         </select>
       </div>
 
+      <!-- Role Selector Toggle -->
+      <div class="split-toggle w-full mb-1" id="login-role-toggle">
+        <button type="button" class="split-toggle-btn active" data-role="owner">👑 管理者登入</button>
+        <button type="button" class="split-toggle-btn" data-role="member">👤 一般使用者登入</button>
+      </div>
+
       <!-- Passcode Area -->
       <div class="passcode-area w-full">
         <div class="passcode-dots" id="passcode-dots" aria-label="密碼輸入點"></div>
@@ -79,12 +85,6 @@
         </div>
       </div>
 
-      <!-- Create new trip -->
-      <div class="lock-divider w-full">或</div>
-      <button type="button" class="btn btn-secondary w-full" id="btn-new-trip">
-        <i class="fa-solid fa-circle-plus"></i> 建立新旅遊行程
-      </button>
-
     </div>
   </div>
 
@@ -103,6 +103,9 @@
         <div class="header-subtitle" id="trip-subtitle">主幣別：TWD</div>
       </div>
       <span class="role-badge" id="role-badge" aria-live="polite"></span>
+      <button class="icon-btn" id="btn-open-links" aria-label="常用連結" title="常用連結" style="margin-right: 2px;">
+        <i class="fa-solid fa-link"></i>
+      </button>
       <button class="icon-btn" id="btn-open-settings" aria-label="設定">
         <i class="fa-solid fa-gear"></i>
       </button>
@@ -438,7 +441,10 @@
 
         <!-- Danger Zone -->
         <div class="danger-zone">
-          <div class="settings-section-title" style="color:var(--danger);">⚠️ 危險操作</div>
+          <div class="settings-section-title" style="color:var(--danger);">⚠️ 系統與管理操作</div>
+          <button type="button" class="btn btn-secondary w-full mb-3" id="btn-settings-create-trip" style="border-color: var(--orange-glow);">
+            <i class="fa-solid fa-circle-plus" style="color: var(--orange-400);"></i> 建立新旅遊行程
+          </button>
           <button type="button" class="btn btn-danger w-full" id="btn-delete-trip">
             <i class="fa-solid fa-trash-can"></i> 永久刪除此行程
           </button>
@@ -472,6 +478,45 @@
       <div class="dialog-actions">
         <button type="button" class="btn btn-secondary flex-1" id="btn-dialog-cancel" style="display:none;">取消</button>
         <button type="button" class="btn btn-primary flex-1" id="btn-dialog-ok">確定</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════
+       MODAL 4: 常用連結
+       ══════════════════════════════════════════════ -->
+  <div class="modal-backdrop" id="modal-links" role="dialog" aria-modal="true" aria-labelledby="links-modal-title">
+    <div class="modal-sheet">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <h3 id="links-modal-title"><i class="fa-solid fa-link" style="color:var(--orange-400);"></i> 常用連結</h3>
+        <button class="modal-close" id="btn-close-links" aria-label="關閉">&times;</button>
+      </div>
+      <div class="modal-body">
+        
+        <!-- Add Link Form (only visible if logged in with write access) -->
+        <form id="form-add-link" style="display:none; flex-direction:column; gap:var(--sp-3); margin-bottom:var(--sp-4);" novalidate>
+          <div class="form-group">
+            <label class="form-label" for="link-title">連結名稱</label>
+            <input type="text" class="form-input" id="link-title" placeholder="例如：飯店訂房確認、行程規劃表" required autocomplete="off">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="link-url">網址 (URL)</label>
+            <input type="url" class="form-input" id="link-url" placeholder="https://..." required autocomplete="off">
+          </div>
+          <button type="submit" class="btn btn-primary btn-sm"><i class="fa-solid fa-plus"></i> 新增連結</button>
+        </form>
+        
+        <div class="divider" id="link-form-divider" style="display:none;"></div>
+
+        <!-- Links List -->
+        <div class="section-header">
+          <i class="fa-solid fa-list-ul section-header-icon"></i> 連結清單
+        </div>
+        <div id="links-list" style="display:flex; flex-direction:column; gap:var(--sp-2);">
+          <!-- injected by JS -->
+        </div>
+
       </div>
     </div>
   </div>

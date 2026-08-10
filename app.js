@@ -42,7 +42,7 @@ const CATEGORY_META = {
  */
 const Store = (() => {
   // Default shape for a new trip
-  function createTrip(id, name, ownerPwd = DEFAULT_OWNER_PWD) {
+  function createTrip(id, name, ownerPwd = DEFAULT_OWNER_PWD, memberPwd = DEFAULT_MEMBER_PWD) {
     return {
       id,
       settings: {
@@ -53,9 +53,10 @@ const Store = (() => {
         members:        ['小明', '小美', '阿強'],
         creditCards:    ['玉山FlyGo', '富邦J卡', '國泰CUBE'],
         ownerPassword:  ownerPwd,
-        memberPassword: DEFAULT_MEMBER_PWD,
+        memberPassword: memberPwd,
       },
       expenses: [],
+      links: [], // Quick links list
     };
   }
 
@@ -108,6 +109,9 @@ const Store = (() => {
         if (!trip.settings.creditCards) {
           trip.settings.creditCards = ['玉山FlyGo', '富邦J卡', '國泰CUBE'];
         }
+        if (!trip.links) {
+          trip.links = [];
+        }
       });
 
       // Restore current trip
@@ -141,9 +145,9 @@ const Store = (() => {
     return true;
   }
 
-  function addTrip(name, ownerPwd) {
+  function addTrip(name, ownerPwd, memberPwd) {
     const id   = `trip_${Date.now()}`;
-    const trip = createTrip(id, name, ownerPwd || DEFAULT_OWNER_PWD);
+    const trip = createTrip(id, name, ownerPwd || DEFAULT_OWNER_PWD, memberPwd || DEFAULT_MEMBER_PWD);
     state.trips[id] = trip;
     state.currentTripId = id;
     save();
@@ -173,6 +177,24 @@ const Store = (() => {
   function saveGasUrl(url) {
     gasUrl = url;
     localStorage.setItem(GLOBAL_GAS_KEY, url);
+  }
+
+  // ── Quick Link CRUD ──
+  function addLink(title, url) {
+    if (!currentTrip().links) currentTrip().links = [];
+    const link = { id: `link_${Date.now()}`, title, url };
+    currentTrip().links.push(link);
+    save();
+    return link;
+  }
+
+  function deleteLink(id) {
+    const list = currentTrip().links || [];
+    const idx  = list.findIndex(l => l.id === id);
+    if (idx === -1) return false;
+    list.splice(idx, 1);
+    save();
+    return true;
   }
 
   // ── Expense CRUD ──
@@ -233,15 +255,15 @@ const Store = (() => {
 
 const Auth = (() => {
   /**
-   * Attempt to verify a passcode. Returns 'owner' | 'member' | null.
+   * Attempt to verify a passcode for a specific role. Returns role or null.
    */
-  function verifyPasscode(passcode) {
+  function verifyPasscode(passcode, role) {
     const { ownerPassword, memberPassword } = Store.settings();
     const ownerPwd  = ownerPassword  || DEFAULT_OWNER_PWD;
     const memberPwd = memberPassword || DEFAULT_MEMBER_PWD;
 
-    if (passcode === ownerPwd)  return 'owner';
-    if (passcode === memberPwd) return 'member';
+    if (role === 'owner' && passcode === ownerPwd)  return 'owner';
+    if (role === 'member' && passcode === memberPwd) return 'member';
     return null;
   }
 
@@ -727,6 +749,38 @@ const UI = (() => {
     }
   }
 
+  // ── Quick Links ──
+  function renderLinks() {
+    const trip = Store.currentTrip();
+    const links = trip.links || [];
+    const container = document.getElementById('links-list');
+    const form = document.getElementById('form-add-link');
+    const divider = document.getElementById('link-form-divider');
+    if (!container) return;
+
+    const canWrite = Store.canWrite();
+    if (form) form.style.display = canWrite ? 'flex' : 'none';
+    if (divider) divider.style.display = canWrite ? 'block' : 'none';
+
+    if (links.length === 0) {
+      container.innerHTML = `<p style="color:var(--text-muted);font-size:var(--fz-sm);text-align:center;padding:var(--sp-4);">目前沒有常用連結</p>`;
+      return;
+    }
+
+    container.innerHTML = links.map(l => `
+      <div class="member-balance-card" style="padding:var(--sp-2) var(--sp-4); align-items:center;">
+        <a href="${esc(l.url)}" target="_blank" class="flex items-center gap-2 text-primary" style="flex:1;min-width:0;text-decoration:none;">
+          <i class="fa-solid fa-arrow-up-right-from-square" style="color:var(--orange-400);font-size:13px;flex-shrink:0;"></i>
+          <span class="truncate" style="font-weight:600;font-size:var(--fz-sm);">${esc(l.title)}</span>
+        </a>
+        ${canWrite ? `
+          <button class="icon-btn" style="background:transparent;border:none;color:var(--text-muted);width:32px;height:32px;font-size:13px;" onclick="AppEvents.deleteLink('${esc(l.id)}')" aria-label="刪除" title="刪除">
+            <i class="fa-solid fa-trash-can"></i>
+          </button>
+        ` : ''}
+      </div>`).join('');
+  }
+
   // ── Full Re-render ──
   function renderAll() {
     renderHeader();
@@ -734,6 +788,7 @@ const UI = (() => {
     renderExpenseList();
     renderSettlement();
     renderStats();
+    renderLinks();
   }
 
   return {
@@ -742,7 +797,7 @@ const UI = (() => {
     showLockScreen, hideLockScreen, checkTripNeedsPassword,
     renderHeader, renderSummary, renderExpenseList,
     renderSettlement, renderStats, renderAll,
-    setCatFilter,
+    setCatFilter, renderLinks,
   };
 })();
 
@@ -1266,6 +1321,18 @@ function exportCSV() {
    ═══════════════════════════════════════════════════════════ */
 
 const AppEvents = {
+  deleteLink(id) {
+    Dialog.confirm('刪除連結', '確定要刪除此常用連結嗎？', true).then(res => {
+      if (!res.ok) return;
+      if (Store.deleteLink(id)) {
+        UI.renderLinks();
+        showToast('連結已刪除', 'success');
+        // also push settings to GAS since links is part of trip metadata
+        Sync.push('save_settings', { settings: Store.settings(), links: Store.currentTrip().links });
+      }
+    });
+  },
+
   deleteExpense(id) {
     Dialog.confirm('刪除確認', '確定要永久刪除這筆記帳紀錄嗎？', true).then(res => {
       if (!res.ok) return;
@@ -1314,8 +1381,21 @@ const AppEvents = {
 
 const Passcode = (() => {
   let buffer = '';
+  let loginRole = 'owner'; // default to owner (admin)
 
   function reset() {
+    buffer = '';
+    loginRole = 'owner';
+    // Reset toggle UI
+    document.querySelectorAll('#login-role-toggle button').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.role === 'owner');
+    });
+    UI.renderPasscodeDots(0);
+    document.getElementById('passcode-error').textContent = '';
+  }
+
+  function setLoginRole(role) {
+    loginRole = role;
     buffer = '';
     UI.renderPasscodeDots(0);
     document.getElementById('passcode-error').textContent = '';
@@ -1344,7 +1424,7 @@ const Passcode = (() => {
   }
 
   function verify() {
-    const role = Auth.verifyPasscode(buffer);
+    const role = Auth.verifyPasscode(buffer, loginRole);
     if (role) {
       Store.unlock(role);
       UI.hideLockScreen();
@@ -1366,7 +1446,7 @@ const Passcode = (() => {
     }
   }
 
-  return { reset, push, pop, clear };
+  return { reset, push, pop, clear, setLoginRole };
 })();
 
 /* ═══════════════════════════════════════════════════════════
@@ -1398,51 +1478,41 @@ document.addEventListener('DOMContentLoaded', () => {
     UI.checkTripNeedsPassword();
   });
 
-  // ── Create new trip ──
-  document.getElementById('btn-new-trip').addEventListener('click', async () => {
-    const currentOwnerPwd = Store.settings()?.ownerPassword;
+  // ── Login Role Toggle ──
+  document.getElementById('login-role-toggle')?.addEventListener('click', e => {
+    const btn = e.target.closest('.split-toggle-btn');
+    if (!btn) return;
+    document.querySelectorAll('#login-role-toggle .split-toggle-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    Passcode.setLoginRole(btn.dataset.role);
+  });
 
-    if (currentOwnerPwd) {
-      // Must verify current owner password first
-      const res = await Dialog.prompt(
-        '建立新旅遊行程',
-        '請輸入當前行程的擁有者密碼驗證身份，並填寫新行程名稱與密碼：',
-        [
-          { type: 'password', placeholder: `目前行程擁有者密碼（預設 ${DEFAULT_OWNER_PWD}）`, maxlength: 4 },
-          { type: 'text',     placeholder: '新行程名稱（如：大阪自由行 🍡）' },
-          { type: 'password', placeholder: `新行程擁有者密碼（預設 ${DEFAULT_OWNER_PWD}）`, maxlength: 4 },
-        ]
-      );
-      if (!res.ok) return;
-      const [verifyPwd, name, newOwnerPwd] = res.values;
+  // ── Create new trip (accessible only from Admin Settings) ──
+  document.getElementById('btn-settings-create-trip')?.addEventListener('click', async () => {
+    const res = await Dialog.prompt(
+      '建立新旅遊行程',
+      '請填寫新行程名稱與密碼設定：',
+      [
+        { type: 'text',     placeholder: '新行程名稱（如：大阪自由行 🍡）' },
+        { type: 'password', placeholder: `管理者密碼（預設 ${DEFAULT_OWNER_PWD}）`, maxlength: 4 },
+        { type: 'password', placeholder: `一般成員密碼（預設 ${DEFAULT_MEMBER_PWD}）`, maxlength: 4 },
+      ]
+    );
+    if (!res.ok) return;
+    const [name, newOwnerPwd, newMemberPwd] = res.values;
 
-      if (verifyPwd !== currentOwnerPwd) {
-        showToast('擁有者密碼驗證失敗！', 'error');
-        return;
-      }
-      if (!name.trim()) { showToast('行程名稱不能為空！', 'warning'); return; }
+    if (!name.trim()) { showToast('行程名稱不能為空！', 'warning'); return; }
 
-      const trip = Store.addTrip(name.trim(), newOwnerPwd || DEFAULT_OWNER_PWD);
-      // Auto-unlock as owner since identity was already verified
-      Store.unlock('owner');
-      UI.renderTripDropdown();
-      UI.hideLockScreen();
-      UI.renderAll();
-      Passcode.reset();
-      showToast(`✅ 行程「${trip.settings.tripName}」建立成功！`, 'success');
-    } else {
-      // No current password — just ask for name
-      const res = await Dialog.prompt('建立新旅遊行程', '請輸入新行程名稱：', [
-        { type: 'text', placeholder: '例如：韓國首爾 5 天 🇰🇷' },
-      ]);
-      if (!res.ok || !res.values[0]?.trim()) return;
-      const trip = Store.addTrip(res.values[0].trim());
-      Store.unlock('owner');
-      UI.renderTripDropdown();
-      UI.hideLockScreen();
-      UI.renderAll();
-      showToast(`✅ 行程「${trip.settings.tripName}」建立成功！`, 'success');
-    }
+    const trip = Store.addTrip(name.trim(), newOwnerPwd || DEFAULT_OWNER_PWD, newMemberPwd || DEFAULT_MEMBER_PWD);
+    
+    // Auto switch and unlock as owner
+    Store.unlock('owner');
+    closeModal('modal-settings');
+    UI.renderTripDropdown();
+    UI.hideLockScreen();
+    UI.renderAll();
+    Passcode.reset();
+    showToast(`✅ 行程「${trip.settings.tripName}」建立成功！`, 'success');
   });
 
   // ── Lock / Go Home ──
@@ -1549,8 +1619,40 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('media-viewer').classList.remove('is-open');
   });
 
+  // ── Quick Links ──
+  document.getElementById('btn-open-links')?.addEventListener('click', () => {
+    UI.renderLinks();
+    openModal('modal-links');
+  });
+  document.getElementById('btn-close-links')?.addEventListener('click', () => closeModal('modal-links'));
+
+  document.getElementById('form-add-link')?.addEventListener('submit', e => {
+    e.preventDefault();
+    const titleEl = document.getElementById('link-title');
+    const urlEl   = document.getElementById('link-url');
+    const title   = titleEl.value.trim();
+    let url       = urlEl.value.trim();
+
+    if (!title) { showToast('請輸入連結名稱！', 'warning'); return; }
+    if (!url)   { showToast('請輸入網址！', 'warning'); return; }
+
+    // Auto prepend https if missing
+    if (!/^https?:\/\//i.test(url)) {
+      url = 'https://' + url;
+    }
+
+    if (Store.addLink(title, url)) {
+      titleEl.value = '';
+      urlEl.value   = '';
+      UI.renderLinks();
+      showToast('常用連結已新增！', 'success');
+      // Push settings metadata to GAS
+      Sync.push('save_settings', { settings: Store.settings(), links: Store.currentTrip().links });
+    }
+  });
+
   // ── Backdrop click to close modals ──
-  ['modal-expense', 'modal-settings'].forEach(id => {
+  ['modal-expense', 'modal-settings', 'modal-links'].forEach(id => {
     document.getElementById(id)?.addEventListener('click', e => {
       if (e.target === document.getElementById(id)) closeModal(id);
     });

@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>TravelPay — 旅遊記帳本</title>
+  <meta name="description" content="支援多行程、多幣別、AA分攤、雲端同步的手機旅遊記帳應用">
+  <meta name="theme-color" content="#0d0d18">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
+  <!-- Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+
+  <!-- Styles -->
+  <link rel="stylesheet" href="css/main.css">
+  <link rel="stylesheet" href="css/components.css">
+
+  <style>
+    /* Desktop centering overrides */
+    @media (min-width: 481px) {
+      .modal-backdrop {
+        left: 50%;
+        right: auto;
+        width: 100%;
+        max-width: 480px;
+        transform: translateX(-50%);
+        border-left: 1px solid var(--glass-border);
+        border-right: 1px solid var(--glass-border);
+      }
+      #media-viewer   { left: 50%; right: auto; width: 100%; max-width: 480px; transform: translateX(-50%); }
+      #fab-add        { right: calc(50% - 240px + 20px); }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ══════════════════════════════════════════════
+       🔐 LOCK SCREEN
+       ══════════════════════════════════════════════ -->
+  <div id="lock-screen">
+    <div class="lock-card">
+
+      <!-- Logo -->
+      <div class="lock-logo">
+        <div class="lock-logo-icon">✈️</div>
+        <div class="lock-logo-title">TravelPay</div>
+        <div class="lock-logo-sub">旅遊記帳本 · 安全存取</div>
+      </div>
+
+      <!-- Trip Selector -->
+      <div class="lock-trip-selector w-full">
+        <label for="select-trip"><i class="fa-solid fa-suitcase-rolling"></i> 選擇旅遊行程</label>
+        <select id="select-trip">
+          <!-- injected by JS -->
+        </select>
+      </div>
+
+      <!-- Passcode Area -->
+      <div class="passcode-area w-full">
+        <div class="passcode-dots" id="passcode-dots" aria-label="密碼輸入點"></div>
+        <div class="passcode-error" id="passcode-error" role="alert"></div>
+
+        <div class="keypad" role="group" aria-label="數字鍵盤">
+          <button type="button" class="keypad-btn" data-val="1">1</button>
+          <button type="button" class="keypad-btn" data-val="2">2</button>
+          <button type="button" class="keypad-btn" data-val="3">3</button>
+          <button type="button" class="keypad-btn" data-val="4">4</button>
+          <button type="button" class="keypad-btn" data-val="5">5</button>
+          <button type="button" class="keypad-btn" data-val="6">6</button>
+          <button type="button" class="keypad-btn" data-val="7">7</button>
+          <button type="button" class="keypad-btn" data-val="8">8</button>
+          <button type="button" class="keypad-btn" data-val="9">9</button>
+          <button type="button" class="keypad-btn keypad-clear" data-val="clear">清除</button>
+          <button type="button" class="keypad-btn" data-val="0">0</button>
+          <button type="button" class="keypad-btn keypad-del" data-val="del" aria-label="退格">
+            <i class="fa-solid fa-delete-left"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Create new trip -->
+      <div class="lock-divider w-full">或</div>
+      <button type="button" class="btn btn-secondary w-full" id="btn-new-trip">
+        <i class="fa-solid fa-circle-plus"></i> 建立新旅遊行程
+      </button>
+
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════
+       📱 APP SHELL
+       ══════════════════════════════════════════════ -->
+  <div id="app" class="app-shell is-blurred">
+
+    <!-- Header -->
+    <header id="app-header">
+      <button class="header-home-btn" id="btn-go-home" title="返回首頁 / 切換行程" aria-label="返回首頁">
+        <i class="fa-solid fa-house"></i>
+      </button>
+      <div class="header-title">
+        <h2 id="trip-name-display">行程名稱</h2>
+        <div class="header-subtitle" id="trip-subtitle">主幣別：TWD</div>
+      </div>
+      <span class="role-badge" id="role-badge" aria-live="polite"></span>
+      <button class="icon-btn" id="btn-open-settings" aria-label="設定">
+        <i class="fa-solid fa-gear"></i>
+      </button>
+    </header>
+
+    <!-- Summary Card -->
+    <div class="summary-card" id="summary-card">
+      <div class="flex justify-between items-start">
+        <div>
+          <div class="summary-total-label">總支出 (TWD)</div>
+          <div class="summary-total-amount" id="total-base">$0</div>
+          <div class="summary-foreign" id="total-foreign"></div>
+        </div>
+        <!-- Mini stats: expense count -->
+        <div style="text-align:right;">
+          <div class="summary-total-label">筆數</div>
+          <div style="font-size:var(--fz-2xl);font-weight:800;color:var(--gold-400);" id="expense-count">0</div>
+        </div>
+      </div>
+      <div class="summary-divider"></div>
+      <div class="summary-bottom">
+        <div class="sync-status online" id="sync-status">
+          <div class="sync-dot"></div>
+          <span class="sync-label" id="sync-label">本地儲存</span>
+        </div>
+        <button class="btn btn-primary btn-sm" id="btn-settle">
+          <i class="fa-solid fa-calculator"></i> 分攤結算
+        </button>
+      </div>
+    </div>
+
+    <!-- Main Content -->
+    <main class="main-content" id="main-content">
+
+      <!-- ── Tab: 明細 ── -->
+      <section id="tab-records" class="tab-panel active">
+        <!-- Filter Bar -->
+        <div class="filter-bar" id="filter-bar" role="group" aria-label="分類過濾">
+          <button class="filter-chip active" data-cat="all">全部</button>
+          <button class="filter-chip" data-cat="餐飲">🍔 餐飲</button>
+          <button class="filter-chip" data-cat="交通">🚗 交通</button>
+          <button class="filter-chip" data-cat="住宿">🏨 住宿</button>
+          <button class="filter-chip" data-cat="購物">🛍️ 購物</button>
+          <button class="filter-chip" data-cat="門票">🎟️ 門票</button>
+          <button class="filter-chip" data-cat="其他">🎈 其他</button>
+        </div>
+        <!-- Expense List -->
+        <div class="expense-list" id="expense-list">
+          <!-- injected by JS -->
+        </div>
+      </section>
+
+      <!-- ── Tab: 結算 ── -->
+      <section id="tab-settlement" class="tab-panel">
+        <div style="padding: var(--sp-4); display:flex;flex-direction:column;gap:var(--sp-4);">
+
+          <!-- Member Balances -->
+          <div class="glass-card p-4">
+            <div class="section-header">
+              <i class="fa-solid fa-hand-holding-dollar section-header-icon"></i>
+              成員收支概況
+            </div>
+            <div id="member-balances" style="display:flex;flex-direction:column;gap:var(--sp-2);">
+              <!-- injected -->
+            </div>
+          </div>
+
+          <!-- Settlement Plan -->
+          <div class="glass-card p-4 warm-border">
+            <div class="section-header">
+              <i class="fa-solid fa-arrows-left-right section-header-icon"></i>
+              最省心轉帳方案
+            </div>
+            <div id="settlement-plan" style="display:flex;flex-direction:column;gap:var(--sp-2);">
+              <!-- injected -->
+            </div>
+            <button type="button" class="btn btn-secondary btn-sm w-full copy-settle-btn" id="btn-copy-settle" style="margin-top:var(--sp-3);">
+              <i class="fa-regular fa-copy"></i> 複製結算結果
+            </button>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- ── Tab: 統計 ── -->
+      <section id="tab-stats" class="tab-panel">
+        <div style="padding: var(--sp-4); display:flex;flex-direction:column;gap:var(--sp-4);">
+          <div class="glass-card p-4">
+            <div class="section-header">
+              <i class="fa-solid fa-chart-pie section-header-icon"></i>
+              分類花費佔比
+            </div>
+            <div id="stats-categories"></div>
+          </div>
+          <div class="glass-card p-4">
+            <div class="section-header">
+              <i class="fa-solid fa-wallet section-header-icon"></i>
+              付款方式統計
+            </div>
+            <div id="stats-payment"></div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- Bottom Nav -->
+    <nav id="bottom-nav" aria-label="主導覽列">
+      <div class="nav-items">
+        <button class="nav-item active" data-tab="tab-records" aria-label="明細">
+          <div class="nav-icon-wrap"><i class="fa-solid fa-list-ul"></i></div>
+          <span class="nav-label">明細</span>
+        </button>
+        <button class="nav-item" data-tab="tab-settlement" aria-label="結算">
+          <div class="nav-icon-wrap"><i class="fa-solid fa-scale-balanced"></i></div>
+          <span class="nav-label">結算</span>
+        </button>
+        <!-- FAB placeholder -->
+        <div style="flex:1.2;"></div>
+        <button class="nav-item" data-tab="tab-stats" aria-label="統計">
+          <div class="nav-icon-wrap"><i class="fa-solid fa-chart-column"></i></div>
+          <span class="nav-label">統計</span>
+        </button>
+        <button class="nav-item" id="btn-nav-settings" aria-label="設定">
+          <div class="nav-icon-wrap"><i class="fa-solid fa-gear"></i></div>
+          <span class="nav-label">設定</span>
+        </button>
+      </div>
+    </nav>
+
+    <!-- FAB -->
+    <button id="fab-add" aria-label="新增記帳">
+      <i class="fa-solid fa-plus"></i>
+    </button>
+
+  </div>
+  <!-- /app -->
+
+
+  <!-- ══════════════════════════════════════════════
+       MODAL 1: 新增 / 編輯消費
+       ══════════════════════════════════════════════ -->
+  <div class="modal-backdrop" id="modal-expense" role="dialog" aria-modal="true" aria-labelledby="modal-expense-title">
+    <div class="modal-sheet">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <h3 id="modal-expense-title"><i class="fa-solid fa-receipt" style="color:var(--orange-400);"></i> <span id="expense-modal-heading">新增消費</span></h3>
+        <button class="modal-close" id="btn-close-expense" aria-label="關閉">&times;</button>
+      </div>
+
+      <form class="modal-body" id="form-expense" novalidate>
+        <input type="hidden" id="expense-id">
+
+        <!-- Amount + Currency -->
+        <div class="form-group mb-4">
+          <label class="form-label"><i class="fa-solid fa-coins"></i> 金額</label>
+          <div class="amount-row">
+            <select id="expense-currency" class="currency-badge" aria-label="幣別">
+              <option value="JPY">JPY ¥</option>
+              <option value="TWD">TWD $</option>
+              <option value="KRW">KRW ₩</option>
+              <option value="USD">USD $</option>
+              <option value="EUR">EUR €</option>
+              <option value="THB">THB ฿</option>
+            </select>
+            <input type="number" step="0.01" id="expense-amount" class="amount-input" placeholder="0" aria-label="金額" autocomplete="off">
+          </div>
+        </div>
+
+        <!-- Title -->
+        <div class="form-group mb-3">
+          <label class="form-label" for="expense-title"><i class="fa-solid fa-pen-to-square"></i> 消費名稱</label>
+          <input type="text" class="form-input" id="expense-title" placeholder="例如：一蘭拉麵、環球影城門票" required autocomplete="off">
+        </div>
+
+        <!-- Category -->
+        <div class="form-group mb-3">
+          <label class="form-label"><i class="fa-solid fa-tags"></i> 分類</label>
+          <div class="cat-selector" id="cat-selector">
+            <button type="button" class="cat-btn active" data-val="餐飲">🍔 餐飲</button>
+            <button type="button" class="cat-btn" data-val="交通">🚗 交通</button>
+            <button type="button" class="cat-btn" data-val="住宿">🏨 住宿</button>
+            <button type="button" class="cat-btn" data-val="購物">🛍️ 購物</button>
+            <button type="button" class="cat-btn" data-val="門票">🎟️ 門票</button>
+            <button type="button" class="cat-btn" data-val="其他">🎈 其他</button>
+          </div>
+          <input type="hidden" id="expense-category" value="餐飲">
+        </div>
+
+        <!-- Paid By + Method (2 cols) -->
+        <div class="flex gap-3 mb-3">
+          <div class="form-group flex-1">
+            <label class="form-label" for="expense-paid-by"><i class="fa-solid fa-user-check"></i> 誰先付</label>
+            <select class="form-select" id="expense-paid-by" required></select>
+          </div>
+          <div class="form-group flex-1">
+            <label class="form-label" for="expense-pay-method"><i class="fa-solid fa-credit-card"></i> 付款方式</label>
+            <select class="form-select" id="expense-pay-method" required></select>
+          </div>
+        </div>
+
+        <!-- Split Members -->
+        <div class="form-group mb-3">
+          <label class="form-label"><i class="fa-solid fa-users"></i> 分攤對象</label>
+          <div class="split-toggle mb-2">
+            <button type="button" class="split-toggle-btn active" id="btn-split-all">全員平分</button>
+            <button type="button" class="split-toggle-btn" id="btn-split-custom">指定人員</button>
+          </div>
+          <div class="checkbox-list" id="split-checkboxes"></div>
+        </div>
+
+        <!-- Date -->
+        <div class="form-group mb-3">
+          <label class="form-label" for="expense-date"><i class="fa-regular fa-calendar"></i> 日期</label>
+          <input type="date" class="form-input" id="expense-date" required>
+        </div>
+
+        <!-- Note -->
+        <div class="form-group mb-4">
+          <label class="form-label" for="expense-note"><i class="fa-regular fa-note-sticky"></i> 備註（選填）</label>
+          <input type="text" class="form-input" id="expense-note" placeholder="如：含回饋、收據備查" autocomplete="off">
+        </div>
+
+        <!-- Attachment -->
+        <div class="form-group mb-2">
+          <label class="form-label"><i class="fa-solid fa-paperclip"></i> 附件 / 收據照片（選填）</label>
+          <input type="file" id="expense-attachment-input" accept="image/*,.pdf,.doc,.docx" style="display:none;" aria-label="上傳附件">
+          <div class="upload-zone" id="btn-upload-trigger" role="button" tabindex="0" aria-label="選擇附件">
+            <div class="upload-zone-icon"><i class="fa-solid fa-cloud-arrow-up"></i></div>
+            <div class="upload-zone-title">拍照 / 選擇檔案</div>
+            <div class="upload-zone-hint">支援圖片、PDF、文件（最大 5MB）</div>
+          </div>
+          <div id="attachment-preview" style="display:none;"></div>
+          <input type="hidden" id="expense-att-data">
+          <input type="hidden" id="expense-att-name">
+          <input type="hidden" id="expense-att-type">
+        </div>
+      </form>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary flex-1" id="btn-cancel-expense">取消</button>
+        <button type="submit" form="form-expense" class="btn btn-primary flex-1" id="btn-save-expense">
+          <i class="fa-solid fa-floppy-disk"></i> 儲存
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════
+       MODAL 2: 設定
+       ══════════════════════════════════════════════ -->
+  <div class="modal-backdrop" id="modal-settings" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title">
+    <div class="modal-sheet">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <h3 id="settings-modal-title"><i class="fa-solid fa-sliders" style="color:var(--orange-400);"></i> 行程設定</h3>
+        <button class="modal-close" id="btn-close-settings" aria-label="關閉">&times;</button>
+      </div>
+
+      <div class="modal-body">
+
+        <!-- Trip name -->
+        <div class="form-group mb-4">
+          <label class="form-label" for="s-trip-name">行程名稱</label>
+          <input type="text" class="form-input" id="s-trip-name" placeholder="東京 5 天 4 夜">
+        </div>
+
+        <!-- Currency + Rate -->
+        <div class="flex gap-3 mb-4">
+          <div class="form-group flex-1">
+            <label class="form-label" for="s-base-currency">主幣別（結算用）</label>
+            <select class="form-select" id="s-base-currency">
+              <option value="TWD">TWD 新台幣</option>
+              <option value="HKD">HKD 港幣</option>
+              <option value="USD">USD 美金</option>
+              <option value="JPY">JPY 日圓</option>
+            </select>
+          </div>
+          <div class="form-group flex-1">
+            <label class="form-label" for="s-exchange-rate">匯率（1外幣＝多少主幣）</label>
+            <input type="number" step="0.0001" class="form-input" id="s-exchange-rate" placeholder="0.215">
+          </div>
+        </div>
+
+        <!-- Members -->
+        <div class="form-group mb-4">
+          <label class="form-label" for="s-members">成員名單（逗號分隔）</label>
+          <input type="text" class="form-input" id="s-members" placeholder="小明, 小美, 阿強">
+          <span class="form-hint">修改名稱後，後續記帳選單會自動更新。</span>
+        </div>
+
+        <!-- Passwords -->
+        <div class="settings-section-title">🔐 雙層密碼設定</div>
+        <div class="flex gap-3 mb-1">
+          <div class="form-group flex-1">
+            <label class="form-label" for="s-owner-pwd">
+              <i class="fa-solid fa-crown" style="color:var(--gold-400);"></i> 擁有者密碼（4位數）
+            </label>
+            <input type="text" pattern="[0-9]*" maxlength="4" class="form-input" id="s-owner-pwd" placeholder="預設 1234">
+          </div>
+          <div class="form-group flex-1">
+            <label class="form-label" for="s-member-pwd">
+              <i class="fa-solid fa-user-lock"></i> 成員密碼（4位數）
+            </label>
+            <input type="text" pattern="[0-9]*" maxlength="4" class="form-input" id="s-member-pwd" placeholder="預設 0000">
+          </div>
+        </div>
+        <p class="form-hint mb-4">成員只能新增消費與查看結算，無法進入設定或刪除行程。</p>
+
+        <!-- Credit Cards -->
+        <div class="form-group mb-4">
+          <label class="form-label" for="s-cards">
+            <i class="fa-solid fa-credit-card"></i> 自訂信用卡列表（逗號分隔）
+          </label>
+          <input type="text" class="form-input" id="s-cards" placeholder="玉山FlyGo, 富邦J卡, 國泰CUBE">
+          <span class="form-hint">這些卡片會顯示在記帳時的付款方式下拉選單。</span>
+        </div>
+
+        <!-- Google Sheet URL -->
+        <div class="divider"></div>
+        <div class="form-group mb-4">
+          <label class="form-label" for="s-gas-url">
+            <i class="fa-solid fa-table" style="color:var(--success);"></i> Google Sheet API 網址（全域）
+          </label>
+          <input type="url" class="form-input" id="s-gas-url" placeholder="https://script.google.com/macros/s/.../exec">
+          <span class="form-hint">所有行程共享此 API，資料自動寫入同一份試算表。</span>
+        </div>
+
+        <!-- Export CSV -->
+        <button type="button" class="btn btn-secondary w-full mb-4" id="btn-export-csv">
+          <i class="fa-solid fa-file-csv"></i> 匯出明細為 CSV
+        </button>
+
+        <!-- Danger Zone -->
+        <div class="danger-zone">
+          <div class="settings-section-title" style="color:var(--danger);">⚠️ 危險操作</div>
+          <button type="button" class="btn btn-danger w-full" id="btn-delete-trip">
+            <i class="fa-solid fa-trash-can"></i> 永久刪除此行程
+          </button>
+        </div>
+
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" id="btn-sync-now">
+          <i class="fa-solid fa-rotate"></i> 手動同步
+        </button>
+        <button type="button" class="btn btn-primary flex-1" id="btn-save-settings">
+          <i class="fa-solid fa-floppy-disk"></i> 儲存設定
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════
+       MODAL 3: 通用對話框
+       ══════════════════════════════════════════════ -->
+  <div class="modal-backdrop center-modal" id="modal-dialog" style="z-index:2100;" role="alertdialog" aria-modal="true" aria-labelledby="dialog-title">
+    <div class="dialog-box">
+      <div class="dialog-icon" id="dialog-icon"><i class="fa-solid fa-circle-info" style="color:var(--orange-400);"></i></div>
+      <h3 class="dialog-title" id="dialog-title">提示</h3>
+      <p class="dialog-msg" id="dialog-msg"></p>
+
+      <!-- optional extra inputs -->
+      <div id="dialog-inputs" class="dialog-input-group" style="display:none;"></div>
+
+      <div class="dialog-actions">
+        <button type="button" class="btn btn-secondary flex-1" id="btn-dialog-cancel" style="display:none;">取消</button>
+        <button type="button" class="btn btn-primary flex-1" id="btn-dialog-ok">確定</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════
+       MEDIA VIEWER
+       ══════════════════════════════════════════════ -->
+  <div id="media-viewer" role="dialog" aria-modal="true" aria-label="附件檢視">
+    <div class="viewer-topbar">
+      <span class="viewer-title" id="viewer-filename">附件</span>
+      <button class="icon-btn" id="btn-close-viewer" style="background:rgba(255,255,255,0.1);color:white;" aria-label="關閉">
+        <i class="fa-solid fa-xmark"></i>
+      </button>
+    </div>
+    <div class="viewer-content" id="viewer-content"></div>
+    <div class="viewer-bottom">
+      <a id="viewer-download" href="#" download class="btn btn-primary" style="text-decoration:none;min-width:200px;">
+        <i class="fa-solid fa-download"></i> 下載附件
+      </a>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div id="toast-container" aria-live="polite" aria-atomic="false"></div>
+
+  <!-- Script -->
+  <script src="app.js"></script>
+</body>
+</html>

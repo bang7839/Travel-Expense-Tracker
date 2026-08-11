@@ -297,9 +297,13 @@ const Sync = (() => {
         // Merge remote trips metadata (no overwrite of local expenses unless remote has more)
         if (data.allTrips) {
           Object.entries(data.allTrips).forEach(([id, remote]) => {
-            if (!Store.allTrips().find(t => t.id === id)) {
+            const localTrip = Store.allTrips().find(t => t.id === id);
+            if (!localTrip) {
               // New trip from cloud — add skeleton
               Store.addTrip(remote.settings.tripName, remote.settings.ownerPassword);
+            } else if (remote.settings) {
+              // Sync settings for existing trips (like tripName, members, etc.)
+              localTrip.settings = { ...localTrip.settings, ...remote.settings };
             }
           });
         }
@@ -563,8 +567,8 @@ const UI = (() => {
 
     return `
       <div class="expense-card" data-id="${esc(e.id)}" role="listitem">
-        <div class="cat-avatar ${meta.cls}" aria-label="${esc(e.category)}">${meta.icon}</div>
-        <div class="expense-info">
+        <div class="cat-avatar ${meta.cls}" aria-label="${esc(e.category)}" onclick="AppEvents.editExpense('${esc(e.id)}')">${meta.icon}</div>
+        <div class="expense-info" onclick="AppEvents.editExpense('${esc(e.id)}')">
           <div class="expense-title">${esc(e.title)}</div>
           <div class="expense-meta">
             <span class="expense-meta-text">${esc(e.paidBy)}</span>
@@ -574,7 +578,7 @@ const UI = (() => {
           </div>
           ${e.note ? `<div class="expense-meta" style="margin-top:2px;"><span class="expense-meta-text" style="opacity:0.7;"><i class="fa-regular fa-note-sticky"></i> ${esc(e.note)}</span></div>` : ''}
         </div>
-        <div class="expense-amount-area">
+        <div class="expense-amount-area" onclick="AppEvents.editExpense('${esc(e.id)}')">
           <div class="expense-amount">${sym}${fmtMoney(amt)}</div>
           ${conv ? `<div class="expense-converted">${esc(conv)}</div>` : ''}
         </div>
@@ -1239,6 +1243,26 @@ const SettingsForm = (() => {
     Sync.push('save_settings', { settings: Store.settings() });
   }
 
+  document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('btn-copy-invite')?.addEventListener('click', () => {
+      const url = document.getElementById('s-gas-url').value.trim();
+      if (!url) {
+        showToast('請先輸入並儲存雲端網址！', 'warning');
+        return;
+      }
+      let param = url;
+      const match = url.match(/\/s\/([^/]+)\/exec/);
+      if (match) param = match[1];
+      
+      const inviteLink = `${window.location.origin}${window.location.pathname}?gas=${param}&trip=${Store.currentTripId}`;
+      navigator.clipboard.writeText(inviteLink).then(() => {
+        showToast('已複製邀請連結！傳給親友即可自動匯入', 'success');
+      }).catch(() => {
+        prompt('複製失敗，請手動複製以下網址：', '', [{value: inviteLink}]);
+      });
+    });
+  });
+
   return { open, save };
 })();
 
@@ -1343,6 +1367,16 @@ const AppEvents = {
         Sync.push('delete_expense', { id });
       }
     });
+  },
+
+  editExpense(id) {
+    if (!Store.canWrite()) {
+      Dialog.alert('無法編輯', '請先解鎖行程後再編輯消費。', 'fa-lock', 'var(--warning)');
+      return;
+    }
+    const e = Store.expenses().find(ex => ex.id === id);
+    if (!e) return;
+    ExpenseForm.open(e);
   },
 
   viewAttachment(id) {
@@ -1458,8 +1492,44 @@ document.addEventListener('DOMContentLoaded', () => {
   // 1. Bootstrap store
   Store.init();
 
-  // 2. Show lock screen or auto-unlock
-  UI.checkTripNeedsPassword();
+  // 1.5 Auto-import from URL (for easy sharing)
+  const params = new URLSearchParams(window.location.search);
+  const importGas = params.get('gas');
+  const importTrip = params.get('trip');
+  
+  if (importGas) {
+    const fullUrl = importGas.startsWith('http') ? importGas : `https://script.google.com/macros/s/${importGas}/exec`;
+    Store.saveGasUrl(fullUrl);
+    window.history.replaceState({}, document.title, window.location.pathname);
+    
+    // Lock screen UI to member by default for invite links
+    if (importTrip) {
+      Passcode.setLoginRole('member');
+    }
+    
+    Sync.pull().then(() => {
+      if (importTrip) {
+        Store.selectTrip(importTrip);
+      }
+      UI.renderTripDropdown();
+      showToast('已透過連結自動載入專屬行程', 'success');
+      UI.checkTripNeedsPassword();
+    });
+  } else {
+    // 2. Show lock screen or auto-unlock if no import URL
+    UI.checkTripNeedsPassword();
+  }
+
+  // 3. Lock screen events
+  document.getElementById('btn-sync-cloud-lock')?.addEventListener('click', async () => {
+    const res = await Dialog.prompt('從雲端匯入', '請輸入您的 Google Apps Script 網址：', [{ placeholder: 'https://script.google.com/macros/s/.../exec' }]);
+    if (res.ok && res.values[0]) {
+      Store.saveGasUrl(res.values[0].trim());
+      await Sync.pull();
+      UI.renderTripDropdown();
+      showToast('行程已從雲端更新', 'success');
+    }
+  });
 
   // ── Passcode keypad ──
   document.querySelectorAll('.keypad-btn').forEach(btn => {

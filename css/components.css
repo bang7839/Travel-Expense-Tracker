@@ -1290,6 +1290,8 @@
   transition: all var(--t-fast);
   outline: none;
   flex: 1;
+  min-width: 0;
+  width: 0;
   -moz-appearance: textfield;
 }
 

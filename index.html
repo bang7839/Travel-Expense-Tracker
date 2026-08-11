@@ -51,9 +51,12 @@
       <!-- Trip Selector -->
       <div class="lock-trip-selector w-full">
         <label for="select-trip"><i class="fa-solid fa-suitcase-rolling"></i> 選擇旅遊行程</label>
-        <select id="select-trip">
-          <!-- injected by JS -->
-        </select>
+        <div style="display:flex;gap:8px;">
+          <select id="select-trip" style="flex:1;">
+            <!-- injected by JS -->
+          </select>
+          <button type="button" class="btn btn-secondary" id="btn-sync-cloud-lock" title="從雲端匯入行程" style="padding:0 14px;background:var(--glass-bg);border:1px solid var(--glass-border);border-radius:var(--r-md);color:var(--text-secondary);"><i class="fa-solid fa-cloud-arrow-down"></i></button>
+        </div>
       </div>
 
       <!-- Role Selector Toggle -->
@@ -382,6 +385,9 @@
               <option value="HKD">HKD 港幣</option>
               <option value="USD">USD 美金</option>
               <option value="JPY">JPY 日圓</option>
+              <option value="EUR">EUR 歐元</option>
+              <option value="KRW">KRW 韓圜</option>
+              <option value="THB">THB 泰銖</option>
             </select>
           </div>
           <div class="form-group flex-1">
@@ -431,7 +437,12 @@
             <i class="fa-solid fa-table" style="color:var(--success);"></i> Google Sheet API 網址（全域）
           </label>
           <input type="url" class="form-input" id="s-gas-url" placeholder="https://script.google.com/macros/s/.../exec">
-          <span class="form-hint">所有行程共享此 API，資料自動寫入同一份試算表。</span>
+          <div class="flex gap-2" style="margin-top: 8px;">
+            <button type="button" class="btn btn-secondary w-full" id="btn-copy-invite" style="padding: 10px; font-size: 13px;">
+              <i class="fa-solid fa-link"></i> 複製邀請連結 (自動匯入雲端)
+            </button>
+          </div>
+          <span class="form-hint" style="margin-top: 8px; display: block;">傳送連結給親友，點開後就會自動載入此雲端網址並同步行程。</span>
         </div>
 
         <!-- Export CSV -->

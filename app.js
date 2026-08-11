@@ -1432,6 +1432,9 @@ const Passcode = (() => {
   function setLoginRole(role) {
     loginRole = role;
     buffer = '';
+    document.querySelectorAll('#login-role-toggle button').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.role === role);
+    });
     UI.renderPasscodeDots(0);
     document.getElementById('passcode-error').textContent = '';
   }
@@ -1505,6 +1508,10 @@ document.addEventListener('DOMContentLoaded', () => {
     // Lock screen UI to member by default for invite links
     if (importTrip) {
       Passcode.setLoginRole('member');
+      const ownerBtn = document.querySelector('.split-toggle-btn[data-role="owner"]');
+      if (ownerBtn) ownerBtn.style.display = 'none';
+      const tripSelector = document.getElementById('select-trip');
+      if (tripSelector) tripSelector.disabled = true;
     }
     
     Sync.pull().then(() => {

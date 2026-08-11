@@ -243,6 +243,7 @@ const Store = (() => {
     getRole, getGasUrl, saveGasUrl,
     selectTrip, addTrip, deleteCurrentTrip, saveSettings,
     addExpense, updateExpense, deleteExpense,
+    addLink, deleteLink,
     unlock, lockout, canWrite, isOwner,
     // expose raw state id for rendering
     get currentTripId() { return state.currentTripId; },

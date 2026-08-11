@@ -542,6 +542,17 @@
   <!-- Toast Container -->
   <div id="toast-container" aria-live="polite" aria-atomic="false"></div>
 
+  <!-- Debug: Global Error Handler (remove when stable) -->
+  <script>
+    window.onerror = function(msg, url, line, col, err) {
+      var el = document.createElement('div');
+      el.style.cssText = 'position:fixed;bottom:10px;left:10px;right:10px;z-index:99999;background:#1a0005;color:#ff6b6b;padding:12px 16px;border-radius:12px;font-size:13px;border:1px solid #ff4444;font-family:monospace;max-height:200px;overflow:auto;';
+      el.textContent = '❌ JS Error [L' + line + ']: ' + msg;
+      document.body.appendChild(el);
+      return false;
+    };
+  </script>
+
   <!-- Script -->
   <script src="app.js"></script>
 </body>

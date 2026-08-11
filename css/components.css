@@ -51,6 +51,7 @@
   opacity: 0;
   transform: scale(1.04);
   pointer-events: none;
+  visibility: hidden;
 }
 
 /* Centre on desktop */

@@ -146,8 +146,17 @@ const Store = (() => {
   }
 
   function addTrip(name, ownerPwd, memberPwd) {
+    const prevTrip = currentTrip();
     const id   = `trip_${Date.now()}`;
     const trip = createTrip(id, name, ownerPwd || DEFAULT_OWNER_PWD, memberPwd || DEFAULT_MEMBER_PWD);
+    
+    if (prevTrip && prevTrip.settings) {
+      trip.settings.baseCurrency = prevTrip.settings.baseCurrency;
+      trip.settings.exchangeRate = prevTrip.settings.exchangeRate;
+      trip.settings.members = [...(prevTrip.settings.members || [])];
+      trip.settings.creditCards = [...(prevTrip.settings.creditCards || [])];
+    }
+    
     state.trips[id] = trip;
     state.currentTripId = id;
     save();
@@ -1213,7 +1222,7 @@ const SettingsForm = (() => {
     openModal('modal-settings');
   }
 
-  function save() {
+  function save(closeModalAfter = true) {
     const parsedMembers = document.getElementById('s-members').value
       .split(/[,，]/).map(s => s.trim()).filter(Boolean);
     const parsedCards = document.getElementById('s-cards').value
@@ -1237,7 +1246,9 @@ const SettingsForm = (() => {
 
     Store.saveGasUrl(document.getElementById('s-gas-url').value.trim());
 
-    closeModal('modal-settings');
+    if (closeModalAfter) {
+      closeModal('modal-settings');
+    }
     UI.renderAll();
     showToast('設定已儲存', 'success');
     Sync.push('save_settings', { settings: Store.settings() });
@@ -1654,7 +1665,9 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-nav-settings').addEventListener('click', () => SettingsForm.open());
   document.getElementById('btn-close-settings').addEventListener('click', () => closeModal('modal-settings'));
 
-  document.getElementById('btn-save-settings').addEventListener('click', () => SettingsForm.save());
+  // ── Settings apply and save ──
+  document.getElementById('btn-apply-settings')?.addEventListener('click', () => SettingsForm.save(false));
+  document.getElementById('btn-save-settings')?.addEventListener('click', () => SettingsForm.save(true));
 
   // ── Delete current trip ──
   document.getElementById('btn-delete-trip').addEventListener('click', async () => {

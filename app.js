@@ -163,6 +163,14 @@ const Store = (() => {
     return trip;
   }
 
+  function importTrip(id, remoteSettings) {
+    const trip = createTrip(id, remoteSettings.tripName, remoteSettings.ownerPassword, remoteSettings.memberPassword);
+    trip.settings = { ...trip.settings, ...remoteSettings };
+    state.trips[id] = trip;
+    save();
+    return trip;
+  }
+
   function deleteCurrentTrip() {
     const id = state.currentTripId;
     delete state.trips[id];
@@ -258,7 +266,7 @@ const Store = (() => {
     init, save,
     currentTrip, settings, expenses, allTrips,
     getRole, getGasUrl, saveGasUrl,
-    selectTrip, addTrip, deleteCurrentTrip, saveSettings,
+    selectTrip, addTrip, importTrip, deleteCurrentTrip, saveSettings,
     addExpense, updateExpense, deleteExpense,
     addLink, deleteLink,
     unlock, lockout, canWrite, isOwner, isDeleted,
@@ -314,12 +322,13 @@ const Sync = (() => {
         // Merge remote trips metadata (no overwrite of local expenses unless remote has more)
         if (data.allTrips) {
           Object.entries(data.allTrips).forEach(([id, remote]) => {
-            if (Store.isDeleted(id)) return; // Skip trips that were deleted locally
+            const cleanId = id.replace(/^SETTINGS_CONFIG_/, '');
+            if (Store.isDeleted(cleanId)) return; // Skip trips that were deleted locally
             
-            const localTrip = Store.allTrips().find(t => t.id === id);
+            const localTrip = Store.allTrips().find(t => t.id === cleanId);
             if (!localTrip) {
-              // New trip from cloud — add skeleton
-              Store.addTrip(remote.settings.tripName, remote.settings.ownerPassword);
+              // New trip from cloud — import exactly
+              Store.importTrip(cleanId, remote.settings);
             } else if (remote.settings) {
               // Sync settings for existing trips (like tripName, members, etc.)
               localTrip.settings = { ...localTrip.settings, ...remote.settings };

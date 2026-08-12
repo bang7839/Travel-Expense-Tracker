@@ -234,7 +234,7 @@ const Store = (() => {
     const list = currentTrip().expenses;
     const idx  = list.findIndex(e => e.id === id);
     if (idx === -1) return null;
-    list[idx] = { ...expense, id };
+    list[idx] = { ...list[idx], ...expense, id };
     save();
     return list[idx];
   }
@@ -336,7 +336,17 @@ const Sync = (() => {
           });
         }
         if (data.expenses && Array.isArray(data.expenses)) {
-          Store.currentTrip().expenses = data.expenses;
+          // Deduplicate by ID, keeping the latest (last) entry for each ID
+          const uniqueExpenses = [];
+          const seen = new Set();
+          for (let i = data.expenses.length - 1; i >= 0; i--) {
+            const exp = data.expenses[i];
+            if (!seen.has(exp.id)) {
+              seen.add(exp.id);
+              uniqueExpenses.unshift(exp);
+            }
+          }
+          Store.currentTrip().expenses = uniqueExpenses;
           Store.save();
         }
         setSyncStatus('online', '雲端已同步');
@@ -1389,13 +1399,15 @@ const AppEvents = {
   },
 
   deleteExpense(id) {
-    Dialog.confirm('刪除確認', '確定要永久刪除這筆記帳紀錄嗎？', true).then(res => {
-      if (!res.ok) return;
+    return Dialog.confirm('刪除確認', '確定要永久刪除這筆記帳紀錄嗎？', true).then(res => {
+      if (!res.ok) return false;
       if (Store.deleteExpense(id)) {
         UI.renderAll();
         showToast('已刪除', 'success');
         Sync.push('delete_expense', { id });
+        return true;
       }
+      return false;
     });
   },
 

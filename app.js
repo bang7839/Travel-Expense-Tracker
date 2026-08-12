@@ -166,16 +166,23 @@ const Store = (() => {
   function deleteCurrentTrip() {
     const id = state.currentTripId;
     delete state.trips[id];
+    
+    // Remember deleted trip to prevent cloud from bringing it back
+    state.deletedTrips = state.deletedTrips || {};
+    state.deletedTrips[id] = true;
+    
     const remaining = Object.keys(state.trips);
     if (remaining.length === 0) {
-      const demo = createTrip('trip_demo', '新旅遊行程');
-      state.trips[demo.id] = demo;
-      state.currentTripId  = demo.id;
+      const newId = `trip_${Date.now()}`;
+      const demo = createTrip(newId, '新旅遊行程');
+      state.trips[newId] = demo;
+      state.currentTripId = newId;
     } else {
       state.currentTripId = remaining[0];
     }
     auth.role = 'guest';
     save();
+    return id;
   }
 
   function saveSettings(newSettings) {
@@ -244,6 +251,7 @@ const Store = (() => {
 
   function canWrite() { return auth.role === 'owner' || auth.role === 'member'; }
   function isOwner()  { return auth.role === 'owner'; }
+  function isDeleted(id) { return !!(state.deletedTrips && state.deletedTrips[id]); }
 
   // Public API
   return {
@@ -253,7 +261,7 @@ const Store = (() => {
     selectTrip, addTrip, deleteCurrentTrip, saveSettings,
     addExpense, updateExpense, deleteExpense,
     addLink, deleteLink,
-    unlock, lockout, canWrite, isOwner,
+    unlock, lockout, canWrite, isOwner, isDeleted,
     // expose raw state id for rendering
     get currentTripId() { return state.currentTripId; },
   };
@@ -306,6 +314,8 @@ const Sync = (() => {
         // Merge remote trips metadata (no overwrite of local expenses unless remote has more)
         if (data.allTrips) {
           Object.entries(data.allTrips).forEach(([id, remote]) => {
+            if (Store.isDeleted(id)) return; // Skip trips that were deleted locally
+            
             const localTrip = Store.allTrips().find(t => t.id === id);
             if (!localTrip) {
               // New trip from cloud — add skeleton
@@ -1679,9 +1689,12 @@ document.addEventListener('DOMContentLoaded', () => {
     );
     if (!res.ok) return;
     closeModal('modal-settings');
-    Store.deleteCurrentTrip();
+    const deletedId = Store.deleteCurrentTrip();
     UI.showLockScreen();
     showToast(`行程「${name}」已刪除`, 'success');
+    
+    // Tell cloud to delete it too
+    Sync.push('delete_trip', { deletedTripId: deletedId });
   });
 
   // ── Sync now ──

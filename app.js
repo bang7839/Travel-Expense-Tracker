@@ -76,6 +76,7 @@ const Store = (() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       trips:         state.trips,
       currentTripId: state.currentTripId,
+      deletedTrips:  state.deletedTrips || {},
     }));
   }
 
@@ -83,6 +84,7 @@ const Store = (() => {
   const state = {
     trips:         {},   // { [tripId]: Trip }
     currentTripId: null, // string
+    deletedTrips:  {},   // { [tripId]: true } — persisted across reloads
   };
 
   // ── Auth State (session only, not persisted) ──
@@ -98,6 +100,7 @@ const Store = (() => {
     const saved = load();
     if (saved && saved.trips && Object.keys(saved.trips).length > 0) {
       state.trips = saved.trips;
+      state.deletedTrips = saved.deletedTrips || {}; // restore deleted list
 
       // Migrate old single-password trips
       Object.values(state.trips).forEach(trip => {
@@ -164,11 +167,11 @@ const Store = (() => {
   }
 
   function importTrip(id, remoteSettings) {
+    if (state.trips[id]) return null; // already exists locally — skip
     const trip = createTrip(id, remoteSettings.tripName, remoteSettings.ownerPassword, remoteSettings.memberPassword);
     trip.settings = { ...trip.settings, ...remoteSettings };
     state.trips[id] = trip;
-    save();
-    return trip;
+    return trip; // caller must call Store.save() after batch imports
   }
 
   function deleteCurrentTrip() {
@@ -321,19 +324,22 @@ const Sync = (() => {
       if (data.success) {
         // Merge remote trips metadata (no overwrite of local expenses unless remote has more)
         if (data.allTrips) {
+          let changed = false;
           Object.entries(data.allTrips).forEach(([id, remote]) => {
             const cleanId = id.replace(/^SETTINGS_CONFIG_/, '');
-            if (Store.isDeleted(cleanId)) return; // Skip trips that were deleted locally
-            
+            if (Store.isDeleted(cleanId)) return; // Skip trips deleted locally
+
             const localTrip = Store.allTrips().find(t => t.id === cleanId);
             if (!localTrip) {
-              // New trip from cloud — import exactly
-              Store.importTrip(cleanId, remote.settings);
+              const imported = Store.importTrip(cleanId, remote.settings);
+              if (imported) changed = true;
             } else if (remote.settings) {
-              // Sync settings for existing trips (like tripName, members, etc.)
+              // Sync settings for existing trips
               localTrip.settings = { ...localTrip.settings, ...remote.settings };
+              changed = true;
             }
           });
+          if (changed) Store.save(); // single batch save
         }
         if (data.expenses && Array.isArray(data.expenses)) {
           // Deduplicate by ID, keeping the latest (last) entry for each ID

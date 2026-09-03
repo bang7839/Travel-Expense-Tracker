@@ -210,6 +210,14 @@
             </div>
             <div id="stats-payment"></div>
           </div>
+          <!-- Credit Card Billing Cycle Report -->
+          <div class="glass-card p-4" id="stats-billing-card" style="display:none;">
+            <div class="section-header">
+              <i class="fa-solid fa-calendar-days section-header-icon"></i>
+              信用卡帳單週期
+            </div>
+            <div id="stats-billing"></div>
+          </div>
         </div>
       </section>
 
@@ -332,16 +340,19 @@
           <input type="text" class="form-input" id="expense-note" placeholder="如：含回饋、收據備查" autocomplete="off">
         </div>
 
-        <!-- Attachment -->
+        <!-- Attachment (multi-file) -->
         <div class="form-group mb-2">
-          <label class="form-label"><i class="fa-solid fa-paperclip"></i> 附件 / 收據照片（選填）</label>
-          <input type="file" id="expense-attachment-input" accept="image/*,.pdf,.doc,.docx" style="display:none;" aria-label="上傳附件">
+          <label class="form-label"><i class="fa-solid fa-paperclip"></i> 附件 / 收據照片（選填，可多張）</label>
+          <input type="file" id="expense-attachment-input" accept="image/*,.pdf,.doc,.docx" multiple style="display:none;" aria-label="上傳附件">
           <div class="upload-zone" id="btn-upload-trigger" role="button" tabindex="0" aria-label="選擇附件">
             <div class="upload-zone-icon"><i class="fa-solid fa-cloud-arrow-up"></i></div>
-            <div class="upload-zone-title">拍照 / 選擇檔案</div>
-            <div class="upload-zone-hint">支援圖片、PDF、文件（最大 5MB）</div>
+            <div class="upload-zone-title">拍照 / 選擇檔案（可多選）</div>
+            <div class="upload-zone-hint">支援圖片、PDF、文件（每檔最大 5MB）</div>
           </div>
-          <div id="attachment-preview" style="display:none;"></div>
+          <div id="attachment-preview" style="display:none; flex-wrap:wrap; gap:8px; margin-top:8px;"></div>
+          <!-- Stores JSON array of {data, name, type} -->
+          <input type="hidden" id="expense-attachments">
+          <!-- Legacy single-attachment compat fields (kept for read) -->
           <input type="hidden" id="expense-att-data">
           <input type="hidden" id="expense-att-name">
           <input type="hidden" id="expense-att-type">

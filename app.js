@@ -1065,6 +1065,98 @@ const UI = (() => {
             </div>`;
         }).join('');
     }
+
+    // ── Credit Card Billing Cycle Analysis ──
+    const cards = (s.creditCards || []).filter(c => {
+      const name = typeof c === 'string' ? c : c.name;
+      const day  = typeof c === 'object' ? c.billingDay : null;
+      return name && day;
+    });
+
+    const billingCard = document.getElementById('stats-billing-card');
+    const billingBox  = document.getElementById('stats-billing');
+    if (!billingCard || !billingBox) return;
+
+    if (cards.length === 0) {
+      billingCard.style.display = 'none';
+      return;
+    }
+    billingCard.style.display = '';
+
+    // Helper: given billingDay (1-31), compute the [start, end] date strings
+    // for the cycle that contains `refDate` (YYYY-MM-DD)
+    function getBillingCycle(billingDay, refDateStr) {
+      const ref = new Date(refDateStr + 'T00:00:00');
+      const d = ref.getDate();
+      let cycleEnd, cycleStart;
+      if (d <= billingDay) {
+        // Still in the cycle that started last month
+        cycleEnd   = new Date(ref.getFullYear(), ref.getMonth(), billingDay);
+        cycleStart = new Date(ref.getFullYear(), ref.getMonth() - 1, billingDay + 1);
+      } else {
+        // In the cycle that started this month
+        cycleEnd   = new Date(ref.getFullYear(), ref.getMonth() + 1, billingDay);
+        cycleStart = new Date(ref.getFullYear(), ref.getMonth(), billingDay + 1);
+      }
+      const fmt = d => d.toISOString().split('T')[0];
+      return { start: fmt(cycleStart), end: fmt(cycleEnd) };
+    }
+
+    const sym = currSym(s.baseCurrency);
+    const today = new Date().toISOString().split('T')[0];
+
+    billingBox.innerHTML = cards.map(c => {
+      const cardName = typeof c === 'string' ? c : c.name;
+      const billingDay = typeof c === 'object' ? c.billingDay : null;
+      const { start, end } = getBillingCycle(billingDay, today);
+
+      // Filter expenses paid with this card and within this cycle
+      const cardKey = `信用卡(${cardName})`;
+      const cycleExs = exs.filter(e => {
+        const method = e.paymentMethod || '';
+        return method === cardKey && e.date >= start && e.date <= end;
+      });
+
+      const total = cycleExs.reduce((sum, e) => {
+        const rate = _rate(e.currency, s.baseCurrency);
+        return sum + (parseFloat(e.amount) || 0) * rate;
+      }, 0);
+
+      // Show at most 5 recent expenses in the cycle
+      const recentExs = cycleExs.slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, 5);
+
+      return `
+        <div style="margin-bottom:var(--sp-4);padding-bottom:var(--sp-4);border-bottom:1px solid var(--glass-border);">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--sp-2);">
+            <span style="font-weight:700;font-size:var(--fz-sm);display:flex;align-items:center;gap:6px;">
+              <i class="fa-solid fa-credit-card" style="color:var(--orange-400);"></i>
+              ${esc(cardName)}
+              <span style="font-size:10px;color:var(--text-muted);font-weight:400;">(結帳日 ${billingDay} 號)</span>
+            </span>
+            <span style="font-weight:700;color:var(--orange-400);">${sym}${fmtMoney(Math.round(total))}</span>
+          </div>
+          <div style="font-size:11px;color:var(--text-muted);margin-bottom:var(--sp-2);">
+            📅 ${start} ～ ${end}　共 ${cycleExs.length} 筆
+          </div>
+          ${recentExs.length === 0
+            ? `<p style="font-size:var(--fz-sm);color:var(--text-muted);padding:8px 0;">本期尚無消費</p>`
+            : recentExs.map(e => {
+                const amt = parseFloat(e.amount) || 0;
+                const rate = _rate(e.currency, s.baseCurrency);
+                const base = Math.round(amt * rate);
+                return `
+                  <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;font-size:var(--fz-sm);">
+                    <span style="color:var(--text-secondary);">${esc(e.date)} ${esc(e.title)}</span>
+                    <span style="font-weight:600;">${currSym(e.currency)}${fmtMoney(amt)}${e.currency !== s.baseCurrency ? ` <span style="font-size:10px;color:var(--text-muted);">≈${sym}${fmtMoney(base)}</span>` : ''}</span>
+                  </div>`;
+              }).join('')
+          }
+          ${cycleExs.length > 5
+            ? `<div style="font-size:11px;color:var(--text-muted);text-align:center;margin-top:4px;">…還有 ${cycleExs.length - 5} 筆</div>`
+            : ''
+          }
+        </div>`;
+    }).join('');
   }
 
   // ── Quick Links ──
@@ -1315,14 +1407,56 @@ const ExpenseForm = (() => {
     });
   }
 
+  // ── Multi-Attachment Helpers ──
+  let _attachments = []; // [{ data, name, type }]
+
   function _clearAttachment() {
+    _attachments = [];
     document.getElementById('expense-attachment-input').value = '';
     document.getElementById('expense-att-data').value = '';
     document.getElementById('expense-att-name').value = '';
     document.getElementById('expense-att-type').value = '';
+    document.getElementById('expense-attachments').value = '';
     const prev = document.getElementById('attachment-preview');
     prev.style.display = 'none';
     prev.innerHTML = '';
+  }
+
+  function _renderAttachmentPreviews() {
+    const container = document.getElementById('attachment-preview');
+    if (_attachments.length === 0) {
+      container.style.display = 'none';
+      container.innerHTML = '';
+      return;
+    }
+    container.style.display = 'flex';
+    container.innerHTML = _attachments.map((att, i) => {
+      const isImage = att.type && att.type.startsWith('image/');
+      return isImage
+        ? `<div style="position:relative;display:inline-block;">
+             <img src="${att.data}" alt="${UI.esc(att.name)}" style="max-height:80px;max-width:120px;border-radius:8px;object-fit:cover;border:1px solid var(--glass-border);">
+             <button type="button" class="attachment-remove-btn" onclick="ExpenseForm._removeAttachment(${i})" style="position:absolute;top:-6px;right:-6px;width:20px;height:20px;font-size:11px;" title="移除"><i class="fa-solid fa-xmark"></i></button>
+           </div>`
+        : `<div style="display:flex;align-items:center;gap:6px;background:var(--glass-bg);border:1px solid var(--glass-border);border-radius:8px;padding:6px 10px;font-size:var(--fz-sm);">
+             <i class="fa-solid fa-file-lines" style="color:var(--orange-400);"></i>
+             <span style="max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${UI.esc(att.name)}</span>
+             <button type="button" onclick="ExpenseForm._removeAttachment(${i})" style="background:none;border:none;color:var(--text-muted);cursor:pointer;padding:0;"><i class="fa-solid fa-xmark" style="font-size:11px;"></i></button>
+           </div>`;
+    }).join('');
+    // Sync to hidden field
+    document.getElementById('expense-attachments').value = JSON.stringify(_attachments.map(a => ({ data: a.data, name: a.name, type: a.type })));
+    // Legacy compat: keep first attachment in old fields
+    const first = _attachments[0];
+    if (first) {
+      document.getElementById('expense-att-data').value = first.data;
+      document.getElementById('expense-att-name').value = first.name;
+      document.getElementById('expense-att-type').value = first.type;
+    }
+  }
+
+  function _removeAttachment(idx) {
+    _attachments.splice(idx, 1);
+    _renderAttachmentPreviews();
   }
 
   function open(expense = null) {
@@ -1353,7 +1487,6 @@ const ExpenseForm = (() => {
     // Payment method
     if (isEdit) {
       const methEl = document.getElementById('expense-pay-method');
-      // Try to set value; if not found it'll stay at first
       setTimeout(() => { methEl.value = expense.paymentMethod; }, 0);
     }
 
@@ -1368,44 +1501,21 @@ const ExpenseForm = (() => {
     splitCus.classList.toggle('active', !isAllSplit);
     _renderSplitCheckboxes(preCheck || members);
 
-    // Clear attachment
+    // Restore attachments
     _clearAttachment();
-
-    // Restore attachment if editing
-    if (isEdit && expense.attachmentData) {
-      document.getElementById('expense-att-data').value = expense.attachmentData;
-      document.getElementById('expense-att-name').value = expense.attachmentName || '';
-      document.getElementById('expense-att-type').value = expense.attachmentType || '';
-      _showAttachmentPreview(expense.attachmentData, expense.attachmentType, expense.attachmentName);
+    if (isEdit) {
+      // New multi-attachment format
+      if (expense.attachments && Array.isArray(expense.attachments) && expense.attachments.length > 0) {
+        _attachments = expense.attachments.map(a => ({ ...a }));
+      } else if (expense.attachmentData) {
+        // Legacy single-attachment compat
+        _attachments = [{ data: expense.attachmentData, name: expense.attachmentName || '附件', type: expense.attachmentType || '' }];
+      }
+      _renderAttachmentPreviews();
     }
 
     openModal('modal-expense');
     setTimeout(() => document.getElementById('expense-amount').focus(), 300);
-  }
-
-  function _showAttachmentPreview(data, type, name) {
-    const container = document.getElementById('attachment-preview');
-    container.style.display = '';
-    const isImage = type && type.startsWith('image/');
-    if (isImage) {
-      container.innerHTML = `
-        <div class="attachment-preview">
-          <img src="${data}" alt="附件預覽">
-          <button type="button" class="attachment-remove-btn" id="btn-remove-att" title="移除"><i class="fa-solid fa-xmark"></i></button>
-        </div>`;
-    } else {
-      container.innerHTML = `
-        <div class="attachment-preview" style="border:1px solid var(--glass-border-warm);border-radius:var(--r-xl);padding:var(--sp-4);">
-          <div class="attachment-preview-file">
-            <i class="fa-solid fa-file-lines" style="font-size:2.5rem;color:var(--orange-400);"></i>
-            <span style="font-size:var(--fz-sm);color:var(--text-secondary);word-break:break-all;">${UI.esc(name)}</span>
-          </div>
-          <button type="button" class="attachment-remove-btn" id="btn-remove-att" title="移除" style="position:relative;top:0;right:0;margin-top:var(--sp-2);"><i class="fa-solid fa-xmark"></i> 移除</button>
-        </div>`;
-    }
-    document.getElementById('btn-remove-att')?.addEventListener('click', () => {
-      _clearAttachment();
-    });
   }
 
   function save() {
@@ -1430,9 +1540,12 @@ const ExpenseForm = (() => {
     const expense = {
       currency, amount, title, category, paidBy,
       paymentMethod: method, date, note, splitWith,
-      attachmentData: document.getElementById('expense-att-data').value,
-      attachmentName: document.getElementById('expense-att-name').value,
-      attachmentType: document.getElementById('expense-att-type').value,
+      // Multi-attachment
+      attachments: _attachments.length > 0 ? [..._attachments] : undefined,
+      // Legacy compat for GAS
+      attachmentData: _attachments[0]?.data || '',
+      attachmentName: _attachments[0]?.name || '',
+      attachmentType: _attachments[0]?.type || '',
     };
 
     let saved;
@@ -1473,7 +1586,7 @@ const ExpenseForm = (() => {
       document.getElementById('expense-category').value = btn.dataset.val;
     });
 
-    // File upload
+    // File upload — multi-file
     const fileInput = document.getElementById('expense-attachment-input');
     document.getElementById('btn-upload-trigger').addEventListener('click', () => fileInput.click());
     document.getElementById('btn-upload-trigger').addEventListener('keydown', e => {
@@ -1481,26 +1594,31 @@ const ExpenseForm = (() => {
     });
 
     fileInput.addEventListener('change', e => {
-      const file = e.target.files[0];
-      if (!file) return;
-      if (file.size > 5 * 1024 * 1024) {
-        showToast('附件大小不能超過 5MB！', 'warning');
-        fileInput.value = '';
-        return;
+      const files = Array.from(e.target.files);
+      if (!files.length) return;
+      const oversized = files.filter(f => f.size > 5 * 1024 * 1024);
+      if (oversized.length > 0) {
+        showToast(`以下檔案超過 5MB，已略過：${oversized.map(f => f.name).join(', ')}`, 'warning');
       }
-      const reader = new FileReader();
-      reader.onload = ev => {
-        const data = ev.target.result;
-        document.getElementById('expense-att-data').value = data;
-        document.getElementById('expense-att-name').value = file.name;
-        document.getElementById('expense-att-type').value = file.type;
-        _showAttachmentPreview(data, file.type, file.name);
-      };
-      reader.readAsDataURL(file);
+      const valid = files.filter(f => f.size <= 5 * 1024 * 1024);
+      if (!valid.length) return;
+      let loaded = 0;
+      valid.forEach(file => {
+        const reader = new FileReader();
+        reader.onload = ev => {
+          _attachments.push({ data: ev.target.result, name: file.name, type: file.type });
+          loaded++;
+          if (loaded === valid.length) {
+            _renderAttachmentPreviews();
+          }
+        };
+        reader.readAsDataURL(file);
+      });
+      fileInput.value = ''; // allow re-selecting same files
     });
   });
 
-  return { open, save };
+  return { open, save, _removeAttachment };
 })();
 
 /* ═══════════════════════════════════════════════════════════
@@ -1769,33 +1887,62 @@ const AppEvents = {
     ExpenseForm.open(e);
   },
 
-  viewAttachment(id) {
+  viewAttachment(id, startIdx = 0) {
     const e = Store.expenses().find(ex => ex.id === id);
-    if (!e || !e.attachmentData) return;
+    if (!e) return;
+
+    // Resolve attachment list (multi or legacy single)
+    const attList = (e.attachments && e.attachments.length > 0)
+      ? e.attachments
+      : (e.attachmentData ? [{ data: e.attachmentData, name: e.attachmentName || '附件', type: e.attachmentType || '' }] : []);
+    if (!attList.length) return;
 
     const viewer   = document.getElementById('media-viewer');
     const title    = document.getElementById('viewer-filename');
     const content  = document.getElementById('viewer-content');
     const download = document.getElementById('viewer-download');
 
-    title.textContent   = e.attachmentName || '附件';
-    download.href       = e.attachmentData;
-    download.download   = e.attachmentName || 'attachment';
-    content.innerHTML   = '';
+    let currentIdx = Math.max(0, Math.min(startIdx, attList.length - 1));
 
-    if (e.attachmentType && e.attachmentType.startsWith('image/')) {
-      const img = document.createElement('img');
-      img.src = e.attachmentData;
-      content.appendChild(img);
-    } else {
-      content.innerHTML = `
-        <div style="text-align:center;color:white;">
-          <i class="fa-solid fa-file-lines" style="font-size:4rem;color:var(--orange-400);margin-bottom:var(--sp-4);display:block;"></i>
-          <div style="font-size:var(--fz-md);font-weight:500;">${UI.esc(e.attachmentName)}</div>
-          <div style="font-size:var(--fz-sm);color:var(--text-secondary);margin-top:var(--sp-2);">${UI.esc(e.attachmentType)}</div>
-        </div>`;
+    function showAtt(idx) {
+      const att = attList[idx];
+      title.textContent  = `${att.name || '附件'}${attList.length > 1 ? ` (${idx + 1}/${attList.length})` : ''}`;
+      download.href      = att.data;
+      download.download  = att.name || 'attachment';
+      content.innerHTML  = '';
+
+      if (att.type && att.type.startsWith('image/')) {
+        const img = document.createElement('img');
+        img.src = att.data;
+        content.appendChild(img);
+      } else {
+        content.innerHTML = `
+          <div style="text-align:center;color:white;">
+            <i class="fa-solid fa-file-lines" style="font-size:4rem;color:var(--orange-400);margin-bottom:var(--sp-4);display:block;"></i>
+            <div style="font-size:var(--fz-md);font-weight:500;">${UI.esc(att.name)}</div>
+            <div style="font-size:var(--fz-sm);color:var(--text-secondary);margin-top:var(--sp-2);">${UI.esc(att.type)}</div>
+          </div>`;
+      }
+
+      // Prev/Next navigation buttons (only when more than 1)
+      const existing = content.parentElement.querySelectorAll('.viewer-nav');
+      existing.forEach(el => el.remove());
+      if (attList.length > 1) {
+        const nav = document.createElement('div');
+        nav.className = 'viewer-nav';
+        nav.style.cssText = 'display:flex;justify-content:center;gap:16px;padding:12px 0;';
+        nav.innerHTML = `
+          <button onclick="AppEvents.viewAttachment('${id}', ${idx - 1})" ${idx === 0 ? 'disabled' : ''}
+            style="background:rgba(255,255,255,0.15);border:none;color:white;padding:8px 18px;border-radius:20px;cursor:pointer;font-size:14px;"
+          >◀ 上一張</button>
+          <button onclick="AppEvents.viewAttachment('${id}', ${idx + 1})" ${idx === attList.length - 1 ? 'disabled' : ''}
+            style="background:rgba(255,255,255,0.15);border:none;color:white;padding:8px 18px;border-radius:20px;cursor:pointer;font-size:14px;"
+          >下一張 ▶</button>`;
+        content.after(nav);
+      }
     }
 
+    showAtt(currentIdx);
     viewer.classList.add('is-open');
   },
 };

@@ -49,9 +49,12 @@ const Store = (() => {
         tripName:       name,
         baseCurrency:   'TWD',
         foreignCurrency:'JPY',
-        exchangeRate:   0.215,
         members:        ['小明', '小美', '阿強'],
-        creditCards:    ['玉山FlyGo', '富邦J卡', '國泰CUBE'],
+        creditCards:    [
+          { name: '玉山FlyGo', billingDay: 25 },
+          { name: '富邦J卡',   billingDay: 15 },
+          { name: '國泰CUBE',  billingDay: 20 },
+        ],
         ownerPassword:  ownerPwd,
         memberPassword: memberPwd,
       },
@@ -110,11 +113,20 @@ const Store = (() => {
           delete trip.settings.appPassword;
         }
         if (!trip.settings.creditCards) {
-          trip.settings.creditCards = ['玉山FlyGo', '富邦J卡', '國泰CUBE'];
+          trip.settings.creditCards = [
+            { name: '玉山FlyGo', billingDay: 25 },
+            { name: '富邦J卡',   billingDay: 15 },
+            { name: '國泰CUBE',  billingDay: 20 },
+          ];
+        } else if (trip.settings.creditCards.length > 0 && typeof trip.settings.creditCards[0] === 'string') {
+          // Migrate old string array to object array
+          trip.settings.creditCards = trip.settings.creditCards.map(c => ({ name: c, billingDay: null }));
         }
         if (!trip.links) {
           trip.links = [];
         }
+        // Remove legacy exchangeRate (now fetched automatically)
+        delete trip.settings.exchangeRate;
       });
 
       // Restore current trip
@@ -129,6 +141,179 @@ const Store = (() => {
       state.trips[demo.id] = demo;
       state.currentTripId  = demo.id;
     }
+
+    // Auto-migrate from previous versions (travelpay_trips_store, travelpay_expenses, etc.)
+    migrateFromOldVersion();
+  }
+
+  // ── Automatic Migration from Old Version LocalStorage ──
+  function migrateFromOldVersion() {
+    let changed = false;
+
+    // 1. Migrate GAS URL if not set
+    const oldGas = localStorage.getItem('travelpay_global_gas_url');
+    if (!gasUrl && oldGas) {
+      gasUrl = oldGas;
+      localStorage.setItem(GLOBAL_GAS_KEY, oldGas);
+      changed = true;
+    }
+
+    // 2. Migrate from old multi-trip store (travelpay_trips_store)
+    const oldTripsRaw = localStorage.getItem('travelpay_trips_store');
+    if (oldTripsRaw) {
+      try {
+        const oldTrips = JSON.parse(oldTripsRaw);
+        if (oldTrips && typeof oldTrips === 'object') {
+          let importedAny = false;
+          Object.entries(oldTrips).forEach(([id, oldTrip]) => {
+            if (!oldTrip || !oldTrip.settings) return;
+            const tripName = oldTrip.settings.tripName || '未命名行程';
+            if (!state.trips[id]) {
+              const trip = createTrip(id, tripName, oldTrip.settings.ownerPassword || oldTrip.settings.appPassword, oldTrip.settings.memberPassword);
+              trip.settings = {
+                ...trip.settings,
+                ...oldTrip.settings,
+                creditCards: (oldTrip.settings.creditCards || []).map(c => typeof c === 'string' ? { name: c, billingDay: null } : c),
+              };
+              delete trip.settings.appPassword;
+              delete trip.settings.exchangeRate;
+              trip.expenses = Array.isArray(oldTrip.expenses) ? oldTrip.expenses : [];
+              trip.links = Array.isArray(oldTrip.links) ? oldTrip.links : [];
+              state.trips[id] = trip;
+              importedAny = true;
+            } else if (state.trips[id].expenses.length === 0 && Array.isArray(oldTrip.expenses) && oldTrip.expenses.length > 0) {
+              state.trips[id].expenses = oldTrip.expenses;
+              importedAny = true;
+            }
+          });
+          if (importedAny) changed = true;
+        }
+      } catch (err) {
+        console.warn('舊版 travelpay_trips_store 移轉失敗:', err);
+      }
+    }
+
+    // 3. Migrate from legacy single-trip store (travelpay_settings & travelpay_expenses)
+    const oldSettingsRaw = localStorage.getItem('travelpay_settings');
+    const oldExpensesRaw = localStorage.getItem('travelpay_expenses');
+    if (oldSettingsRaw) {
+      try {
+        const parsedSet = JSON.parse(oldSettingsRaw);
+        const parsedExp = oldExpensesRaw ? JSON.parse(oldExpensesRaw) : [];
+        const legacyId = 'trip_legacy_import';
+        if (!state.trips[legacyId] && (!state.trips || Object.keys(state.trips).length === 0 || (Object.keys(state.trips).length === 1 && state.trips['trip_demo']))) {
+          const trip = createTrip(legacyId, parsedSet.tripName || '舊版匯入行程', parsedSet.ownerPassword || parsedSet.appPassword, parsedSet.memberPassword);
+          trip.settings = {
+            ...trip.settings,
+            ...parsedSet,
+            creditCards: (parsedSet.creditCards || []).map(c => typeof c === 'string' ? { name: c, billingDay: null } : c),
+          };
+          delete trip.settings.appPassword;
+          delete trip.settings.exchangeRate;
+          trip.expenses = Array.isArray(parsedExp) ? parsedExp : [];
+          state.trips[legacyId] = trip;
+          changed = true;
+        }
+      } catch (err) {
+        console.warn('舊版單行程移轉失敗:', err);
+      }
+    }
+
+    // 4. Remove empty trip_demo if real trips were imported
+    const tripIds = Object.keys(state.trips);
+    if (tripIds.length > 1 && state.trips['trip_demo'] && state.trips['trip_demo'].expenses.length === 0) {
+      delete state.trips['trip_demo'];
+      if (state.currentTripId === 'trip_demo') {
+        state.currentTripId = Object.keys(state.trips)[0];
+      }
+      changed = true;
+    }
+
+    if (changed) {
+      save();
+    }
+  }
+
+  // ── Import JSON Data (Supports new version, old version, or raw expenses) ──
+  function importJsonData(data) {
+    if (!data || typeof data !== 'object') throw new Error('無效的 JSON 資料格式');
+    let importedTrips = 0;
+    let importedExpenses = 0;
+
+    // Case A: Pure array of expenses -> import into current trip
+    if (Array.isArray(data)) {
+      const cur = currentTrip();
+      if (!cur) throw new Error('找不到當前行程');
+      const seen = new Set(cur.expenses.map(e => e.id));
+      data.forEach(exp => {
+        if (!exp || typeof exp !== 'object') return;
+        if (!exp.id) exp.id = `exp_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+        if (!seen.has(exp.id)) {
+          seen.add(exp.id);
+          cur.expenses.push(exp);
+          importedExpenses++;
+        }
+      });
+      save();
+      return { tripsCount: 0, expensesCount: importedExpenses };
+    }
+
+    // Case B: Multi-trip or single-trip object
+    const tripsObj = (data.trips && typeof data.trips === 'object') ? data.trips : data;
+
+    // Check if it's a single trip
+    if (tripsObj.settings && (tripsObj.expenses || tripsObj.id)) {
+      const tId = tripsObj.id || `trip_${Date.now()}`;
+      const trip = createTrip(tId, tripsObj.settings.tripName || '匯入行程', tripsObj.settings.ownerPassword, tripsObj.settings.memberPassword);
+      trip.settings = {
+        ...trip.settings,
+        ...tripsObj.settings,
+        creditCards: (tripsObj.settings.creditCards || []).map(c => typeof c === 'string' ? { name: c, billingDay: null } : c),
+      };
+      delete trip.settings.exchangeRate;
+      trip.expenses = Array.isArray(tripsObj.expenses) ? tripsObj.expenses : [];
+      trip.links = Array.isArray(tripsObj.links) ? tripsObj.links : [];
+      state.trips[tId] = trip;
+      state.currentTripId = tId;
+      importedTrips = 1;
+      importedExpenses = trip.expenses.length;
+    } else {
+      // Multi-trips
+      Object.entries(tripsObj).forEach(([id, t]) => {
+        if (!t || typeof t !== 'object' || !t.settings) return;
+        const trip = createTrip(id, t.settings.tripName || '匯入行程', t.settings.ownerPassword, t.settings.memberPassword);
+        trip.settings = {
+          ...trip.settings,
+          ...t.settings,
+          creditCards: (t.settings.creditCards || []).map(c => typeof c === 'string' ? { name: c, billingDay: null } : c),
+        };
+        delete trip.settings.exchangeRate;
+        trip.expenses = Array.isArray(t.expenses) ? t.expenses : [];
+        trip.links = Array.isArray(t.links) ? t.links : [];
+        state.trips[id] = trip;
+        importedTrips++;
+        importedExpenses += (trip.expenses ? trip.expenses.length : 0);
+      });
+      if (data.currentTripId && state.trips[data.currentTripId]) {
+        state.currentTripId = data.currentTripId;
+      }
+    }
+
+    if (data.gasUrl) {
+      saveGasUrl(data.gasUrl);
+    }
+
+    // Clean up empty demo trip
+    const tripIds = Object.keys(state.trips);
+    if (importedTrips > 0 && tripIds.length > 1 && state.trips['trip_demo'] && state.trips['trip_demo'].expenses.length === 0) {
+      delete state.trips['trip_demo'];
+      if (state.currentTripId === 'trip_demo') {
+        state.currentTripId = Object.keys(state.trips)[0];
+      }
+    }
+
+    save();
+    return { tripsCount: importedTrips, expensesCount: importedExpenses };
   }
 
   // ── Getters ──
@@ -155,9 +340,10 @@ const Store = (() => {
     
     if (prevTrip && prevTrip.settings) {
       trip.settings.baseCurrency = prevTrip.settings.baseCurrency;
-      trip.settings.exchangeRate = prevTrip.settings.exchangeRate;
       trip.settings.members = [...(prevTrip.settings.members || [])];
-      trip.settings.creditCards = [...(prevTrip.settings.creditCards || [])];
+      trip.settings.creditCards = (prevTrip.settings.creditCards || []).map(c =>
+        typeof c === 'string' ? { name: c, billingDay: null } : { ...c }
+      );
     }
     
     state.trips[id] = trip;
@@ -273,6 +459,7 @@ const Store = (() => {
     addExpense, updateExpense, deleteExpense,
     addLink, deleteLink,
     unlock, lockout, canWrite, isOwner, isDeleted,
+    importJsonData,
     // expose raw state id for rendering
     get currentTripId() { return state.currentTripId; },
   };
@@ -309,6 +496,70 @@ const Auth = (() => {
 })();
 
 /* ═══════════════════════════════════════════════════════════
+   EXCHANGE RATE — Auto-fetch & Cache
+   ═══════════════════════════════════════════════════════════ */
+
+const ExchangeRate = (() => {
+  const CACHE_KEY  = 'travelpay_fx_cache';
+  const CACHE_TTL  = 6 * 60 * 60 * 1000; // 6 hours
+
+  function _load() {
+    try { return JSON.parse(localStorage.getItem(CACHE_KEY)) || {}; } catch { return {}; }
+  }
+  function _save(cache) {
+    localStorage.setItem(CACHE_KEY, JSON.stringify(cache));
+  }
+
+  /**
+   * Get exchange rate: how many base-currency units is 1 foreign unit worth.
+   * e.g. getRate('JPY', 'TWD') => ~0.215
+   * Returns cached value immediately if fresh; fetches in background otherwise.
+   */
+  async function getRate(foreign, base) {
+    if (foreign === base) return 1;
+    const key = `${foreign}_${base}`;
+    const cache = _load();
+    const entry = cache[key];
+    if (entry && (Date.now() - entry.ts) < CACHE_TTL) {
+      return entry.rate;
+    }
+    try {
+      // Use exchangerate-api (free, no key needed for basic use)
+      const res  = await fetch(`https://api.exchangerate-api.com/v4/latest/${foreign}`);
+      const data = await res.json();
+      const rate = data.rates?.[base];
+      if (rate) {
+        cache[key] = { rate, ts: Date.now() };
+        _save(cache);
+        return rate;
+      }
+    } catch { /* fall through to backup */ }
+    // Backup: try frankfurter.app
+    try {
+      const res  = await fetch(`https://api.frankfurter.app/latest?from=${foreign}&to=${base}`);
+      const data = await res.json();
+      const rate = data.rates?.[base];
+      if (rate) {
+        cache[key] = { rate, ts: Date.now() };
+        _save(cache);
+        return rate;
+      }
+    } catch { /* both failed */ }
+    // Return last cached even if stale, or 1 as fallback
+    return entry?.rate ?? 1;
+  }
+
+  function getCached(foreign, base) {
+    if (foreign === base) return 1;
+    const key = `${foreign}_${base}`;
+    const entry = _load()[key];
+    return entry?.rate ?? null;
+  }
+
+  return { getRate, getCached };
+})();
+
+/* ═══════════════════════════════════════════════════════════
    GAS SYNC — Google Apps Script Cloud Sync
    ═══════════════════════════════════════════════════════════ */
 
@@ -337,6 +588,14 @@ const Sync = (() => {
               // Sync settings for existing trips
               localTrip.settings = { ...localTrip.settings, ...remote.settings };
               changed = true;
+            }
+            // Always sync links if remote has them
+            if (remote.links && Array.isArray(remote.links)) {
+              const targetTrip = Store.allTrips().find(t => t.id === (id.replace(/^SETTINGS_CONFIG_/, '')));
+              if (targetTrip) {
+                targetTrip.links = remote.links;
+                changed = true;
+              }
             }
           });
           if (changed) Store.save(); // single batch save
@@ -477,8 +736,12 @@ const UI = (() => {
     const s = Store.settings();
     document.getElementById('trip-name-display').textContent = s.tripName;
     const fc = s.foreignCurrency || 'JPY';
+    const cachedRate = ExchangeRate.getCached(fc, s.baseCurrency);
+    const rateLabel = cachedRate
+      ? `1 ${fc} ≈ ${cachedRate.toFixed(cachedRate < 1 ? 4 : 2)} ${s.baseCurrency}`
+      : `匯率同步中…`;
     document.getElementById('trip-subtitle').textContent =
-      `主幣別：${s.baseCurrency}  ·  1 ${fc} = ${s.exchangeRate} ${s.baseCurrency}`;
+      `主幣別：${s.baseCurrency}  ·  ${rateLabel}`;
 
     const badge = document.getElementById('role-badge');
     const role  = Store.getRole();
@@ -495,6 +758,12 @@ const UI = (() => {
     }
   }
 
+  // ── Rate helper: returns how many base units = 1 unit of foreign ──
+  function _rate(fromCurrency, toBaseCurrency) {
+    if (fromCurrency === toBaseCurrency) return 1;
+    return ExchangeRate.getCached(fromCurrency, toBaseCurrency) || 1;
+  }
+
   // ── Summary Card ──
   function renderSummary() {
     const s   = Store.settings();
@@ -509,7 +778,7 @@ const UI = (() => {
         totalBase += amt;
       } else {
         totalForeign += amt;
-        totalBase    += amt * (parseFloat(s.exchangeRate) || 1);
+        totalBase    += amt * _rate(e.currency, s.baseCurrency);
       }
     });
 
@@ -594,7 +863,7 @@ const UI = (() => {
     const amt    = parseFloat(e.amount) || 0;
     const sym    = currSym(e.currency);
     const isBase = e.currency === s.baseCurrency;
-    const conv   = isBase ? '' : `≈ ${currSym(s.baseCurrency)}${fmtMoney(Math.round(amt * (s.exchangeRate||1)))}`;
+    const conv   = isBase ? '' : `≈ ${currSym(s.baseCurrency)}${fmtMoney(Math.round(amt * _rate(e.currency, s.baseCurrency)))}`;
 
     const hasAtt  = !!e.attachmentData;
     const isImg   = hasAtt && e.attachmentType && e.attachmentType.startsWith('image/');
@@ -643,7 +912,7 @@ const UI = (() => {
     members.forEach(m => { balance[m] = 0; });
 
     exs.forEach(e => {
-      const rate    = e.currency === s.baseCurrency ? 1 : (parseFloat(s.exchangeRate) || 1);
+      const rate    = _rate(e.currency, s.baseCurrency);
       const baseAmt = (parseFloat(e.amount) || 0) * rate;
 
       // payer gets credit
@@ -742,7 +1011,7 @@ const UI = (() => {
     let   grandTotal = 0;
 
     exs.forEach(e => {
-      const rate   = e.currency === s.baseCurrency ? 1 : (parseFloat(s.exchangeRate) || 1);
+      const rate   = _rate(e.currency, s.baseCurrency);
       const base   = (parseFloat(e.amount) || 0) * rate;
       grandTotal  += base;
       catTotals[e.category]              = (catTotals[e.category] || 0) + base;
@@ -1012,7 +1281,11 @@ const ExpenseForm = (() => {
     };
     addOpt('現金', '💵 現金');
     const cards = Store.settings().creditCards || [];
-    cards.forEach(c => addOpt(`信用卡(${c})`, `💳 ${c}`));
+    cards.forEach(c => {
+      const name = typeof c === 'string' ? c : c.name;
+      const day  = typeof c === 'object' && c.billingDay ? `（結帳日 ${c.billingDay} 號）` : '';
+      addOpt(`信用卡(${name})`, `💳 ${name}${day}`);
+    });
     addOpt('信用卡(其他)', '💳 其他信用卡');
     addOpt('IC卡/Pay', '📱 IC卡 / 街口 / LINE Pay');
   }
@@ -1235,6 +1508,32 @@ const ExpenseForm = (() => {
    ═══════════════════════════════════════════════════════════ */
 
 const SettingsForm = (() => {
+  // ── Internal card list (maintained in memory while modal is open) ──
+  let _cards = []; // array of { name, billingDay }
+
+  function _renderCardList() {
+    const container = document.getElementById('card-list');
+    if (!container) return;
+    if (_cards.length === 0) {
+      container.innerHTML = `<p style="color:var(--text-muted);font-size:var(--fz-sm);text-align:center;padding:8px 0;">尚未新增信用卡</p>`;
+      return;
+    }
+    container.innerHTML = _cards.map((c, i) => `
+      <div style="display:flex;align-items:center;gap:8px;background:var(--glass-bg);border:1px solid var(--glass-border);border-radius:var(--r-md);padding:8px 12px;">
+        <i class="fa-solid fa-credit-card" style="color:var(--orange-400);flex-shrink:0;"></i>
+        <span style="flex:1;font-weight:600;font-size:var(--fz-sm);">${UI.esc(c.name)}</span>
+        ${c.billingDay ? `<span style="font-size:11px;color:var(--text-secondary);white-space:nowrap;">結帳日 ${c.billingDay} 號</span>` : ''}
+        <button type="button" onclick="SettingsForm.removeCard(${i})" style="background:none;border:none;color:var(--text-muted);padding:4px;cursor:pointer;" aria-label="刪除">
+          <i class="fa-solid fa-trash-can" style="font-size:12px;"></i>
+        </button>
+      </div>`).join('');
+  }
+
+  function removeCard(idx) {
+    _cards.splice(idx, 1);
+    _renderCardList();
+  }
+
   function open() {
     if (!Store.isOwner()) {
       Dialog.alert(
@@ -1248,19 +1547,21 @@ const SettingsForm = (() => {
     const s = Store.settings();
     document.getElementById('s-trip-name').value      = s.tripName;
     document.getElementById('s-base-currency').value  = s.baseCurrency;
-    document.getElementById('s-exchange-rate').value  = s.exchangeRate;
     document.getElementById('s-members').value        = s.members.join(', ');
     document.getElementById('s-owner-pwd').value      = s.ownerPassword || '';
     document.getElementById('s-member-pwd').value     = s.memberPassword || '';
-    document.getElementById('s-cards').value          = (s.creditCards || []).join(', ');
     document.getElementById('s-gas-url').value        = Store.getGasUrl();
+
+    // Load credit cards (support both old string[] and new object[])
+    _cards = (s.creditCards || []).map(c =>
+      typeof c === 'string' ? { name: c, billingDay: null } : { ...c }
+    );
+    _renderCardList();
     openModal('modal-settings');
   }
 
   function save(closeModalAfter = true) {
     const parsedMembers = document.getElementById('s-members').value
-      .split(/[,，]/).map(s => s.trim()).filter(Boolean);
-    const parsedCards = document.getElementById('s-cards').value
       .split(/[,，]/).map(s => s.trim()).filter(Boolean);
     const ownerPwd  = document.getElementById('s-owner-pwd').value.trim();
     const memberPwd = document.getElementById('s-member-pwd').value.trim();
@@ -1272,9 +1573,8 @@ const SettingsForm = (() => {
     Store.saveSettings({
       tripName:       document.getElementById('s-trip-name').value.trim() || '旅遊行程',
       baseCurrency:   document.getElementById('s-base-currency').value,
-      exchangeRate:   parseFloat(document.getElementById('s-exchange-rate').value) || 1,
       members:        parsedMembers.length > 0 ? parsedMembers : ['我'],
-      creditCards:    parsedCards,
+      creditCards:    [..._cards],
       ownerPassword:  ownerPwd,
       memberPassword: memberPwd,
     });
@@ -1286,8 +1586,23 @@ const SettingsForm = (() => {
     }
     UI.renderAll();
     showToast('設定已儲存', 'success');
-    Sync.push('save_settings', { settings: Store.settings() });
+    Sync.push('save_settings', { settings: Store.settings(), links: Store.currentTrip().links || [] });
   }
+
+  // ── DOMContentLoaded wiring ──
+  document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('btn-add-card')?.addEventListener('click', () => {
+      const nameEl = document.getElementById('s-card-name');
+      const dayEl  = document.getElementById('s-card-day');
+      const name   = nameEl.value.trim();
+      const day    = parseInt(dayEl.value, 10);
+      if (!name) { showToast('請輸入卡片名稱！', 'warning'); return; }
+      _cards.push({ name, billingDay: (day >= 1 && day <= 31) ? day : null });
+      nameEl.value = '';
+      dayEl.value  = '';
+      _renderCardList();
+    });
+  });
 
   document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('btn-copy-invite')?.addEventListener('click', () => {
@@ -1309,7 +1624,7 @@ const SettingsForm = (() => {
     });
   });
 
-  return { open, save };
+  return { open, save, removeCard };
 })();
 
 /* ═══════════════════════════════════════════════════════════
@@ -1362,7 +1677,7 @@ function exportCSV() {
 
   const header = ['日期', '名稱', '分類', '付款人', '付款方式', '幣別', '金額', `換算${s.baseCurrency}`, '分攤成員', '備註'];
   const rows   = exs.map(e => {
-    const rate = e.currency === s.baseCurrency ? 1 : (parseFloat(s.exchangeRate) || 1);
+    const rate = e.currency === s.baseCurrency ? 1 : (ExchangeRate.getCached(e.currency, s.baseCurrency) || 1);
     const base = Math.round((parseFloat(e.amount) || 0) * rate);
     return [
       e.date, e.title, e.category, e.paidBy, e.paymentMethod,
@@ -1384,6 +1699,33 @@ function exportCSV() {
   link.click();
   URL.revokeObjectURL(url);
   showToast('CSV 已匯出！', 'success');
+}
+
+/* ═══════════════════════════════════════════════════════════
+   JSON BACKUP EXPORT
+   ═══════════════════════════════════════════════════════════ */
+
+function exportJSON() {
+  const data = {
+    version: 'travelpay_v3',
+    exportDate: new Date().toISOString(),
+    gasUrl: Store.getGasUrl(),
+    currentTripId: Store.currentTripId,
+    trips: Store.allTrips().reduce((acc, t) => {
+      acc[t.id] = t;
+      return acc;
+    }, {})
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  const tripName = (Store.settings()?.tripName || 'travelpay').replace(/[/\\?%*:|"<>]/g, '_');
+  const dateStr  = new Date().toISOString().slice(0, 10);
+  link.href     = url;
+  link.download = `${tripName}_完整備份_${dateStr}.json`;
+  link.click();
+  URL.revokeObjectURL(url);
+  showToast('已匯出完整 JSON 備份檔！', 'success');
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -1517,6 +1859,15 @@ const Passcode = (() => {
       UI.renderAll();
       showToast(`歡迎！以「${role === 'owner' ? '管理者' : '成員'}」身份登入`, 'success');
       if (Store.getGasUrl()) Sync.pull();
+      // Prefetch live exchange rates in background
+      (async () => {
+        const s = Store.settings();
+        const currencies = [...new Set(Store.expenses().map(e => e.currency).filter(c => c && c !== s.baseCurrency))];
+        for (const c of currencies) {
+          await ExchangeRate.getRate(c, s.baseCurrency);
+        }
+        if (currencies.length > 0) UI.renderAll(); // re-render with fresh rates
+      })();
       buffer = '';
     } else {
       // Shake and show error
@@ -1729,8 +2080,36 @@ document.addEventListener('DOMContentLoaded', () => {
     Sync.pull().then(() => showToast('同步完成', 'success'));
   });
 
-  // ── Export CSV ──
-  document.getElementById('btn-export-csv').addEventListener('click', exportCSV);
+  // ── Export CSV & JSON ──
+  document.getElementById('btn-export-csv')?.addEventListener('click', exportCSV);
+  document.getElementById('btn-export-json')?.addEventListener('click', exportJSON);
+
+  // ── Import JSON ──
+  const fileImportEl = document.getElementById('file-import-json');
+  document.getElementById('btn-import-json')?.addEventListener('click', () => {
+    if (fileImportEl) {
+      fileImportEl.value = '';
+      fileImportEl.click();
+    }
+  });
+
+  fileImportEl?.addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        const json = JSON.parse(ev.target.result);
+        const res = Store.importJsonData(json);
+        UI.renderTripDropdown();
+        UI.renderAll();
+        showToast(`✅ 成功匯入 ${res.tripsCount ? res.tripsCount + ' 個行程、' : ''}${res.expensesCount} 筆消費！`, 'success');
+      } catch (err) {
+        Dialog.alert('匯入失敗', '檔案內容無法解析，請確認是否為正確的 JSON 檔案。\n' + err.message, 'fa-triangle-exclamation', 'var(--danger)');
+      }
+    };
+    reader.readAsText(file);
+  });
 
   // ── Copy settlement ──
   document.getElementById('btn-copy-settle').addEventListener('click', () => {

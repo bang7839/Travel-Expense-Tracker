@@ -376,24 +376,19 @@
           <input type="text" class="form-input" id="s-trip-name" placeholder="東京 5 天 4 夜">
         </div>
 
-        <!-- Currency + Rate -->
-        <div class="flex gap-3 mb-4">
-          <div class="form-group flex-1">
-            <label class="form-label" for="s-base-currency">主幣別（結算用）</label>
-            <select class="form-select" id="s-base-currency">
-              <option value="TWD">TWD 新台幣</option>
-              <option value="HKD">HKD 港幣</option>
-              <option value="USD">USD 美金</option>
-              <option value="JPY">JPY 日圓</option>
-              <option value="EUR">EUR 歐元</option>
-              <option value="KRW">KRW 韓圜</option>
-              <option value="THB">THB 泰銖</option>
-            </select>
-          </div>
-          <div class="form-group flex-1">
-            <label class="form-label" for="s-exchange-rate">匯率（1外幣＝多少主幣）</label>
-            <input type="number" step="0.0001" class="form-input" id="s-exchange-rate" placeholder="0.215">
-          </div>
+        <!-- Currency -->
+        <div class="form-group mb-4">
+          <label class="form-label" for="s-base-currency">主幣別（結算用）</label>
+          <select class="form-select" id="s-base-currency">
+            <option value="TWD">TWD 新台幣</option>
+            <option value="HKD">HKD 港幣</option>
+            <option value="USD">USD 美金</option>
+            <option value="JPY">JPY 日圓</option>
+            <option value="EUR">EUR 歐元</option>
+            <option value="KRW">KRW 韓圜</option>
+            <option value="THB">THB 泰銖</option>
+          </select>
+          <span class="form-hint" style="margin-top:6px;display:block;">💱 記帳時自動抓取當日即時匯率換算</span>
         </div>
 
         <!-- Members -->
@@ -423,11 +418,18 @@
 
         <!-- Credit Cards -->
         <div class="form-group mb-4">
-          <label class="form-label" for="s-cards">
-            <i class="fa-solid fa-credit-card"></i> 自訂信用卡列表（逗號分隔）
+          <label class="form-label">
+            <i class="fa-solid fa-credit-card"></i> 信用卡管理
           </label>
-          <input type="text" class="form-input" id="s-cards" placeholder="玉山FlyGo, 富邦J卡, 國泰CUBE">
-          <span class="form-hint">這些卡片會顯示在記帳時的付款方式下拉選單。</span>
+          <div id="card-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:8px;"></div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <input type="text" class="form-input" id="s-card-name" placeholder="卡片名稱（如：玉山FlyGo）" style="flex:2;">
+            <input type="number" class="form-input" id="s-card-day" placeholder="結帳日" min="1" max="31" style="flex:1;min-width:70px;">
+            <button type="button" class="btn btn-secondary" id="btn-add-card" style="padding:10px 14px;white-space:nowrap;">
+              <i class="fa-solid fa-plus"></i>
+            </button>
+          </div>
+          <span class="form-hint" style="margin-top:6px;display:block;">結帳日可用來提示帳單週期，記帳時顯示於信用卡名稱旁。</span>
         </div>
 
         <!-- Google Sheet URL -->
@@ -445,10 +447,21 @@
           <span class="form-hint" style="margin-top: 8px; display: block;">傳送連結給親友，點開後就會自動載入此雲端網址並同步行程。</span>
         </div>
 
-        <!-- Export CSV -->
-        <button type="button" class="btn btn-secondary w-full mb-4" id="btn-export-csv">
-          <i class="fa-solid fa-file-csv"></i> 匯出明細為 CSV
-        </button>
+        <!-- Data Backup & Migration -->
+        <div class="settings-section-title">📦 資料備份與移轉</div>
+        <div class="flex gap-2 mb-2">
+          <button type="button" class="btn btn-secondary flex-1" id="btn-export-csv" style="padding:10px 4px;font-size:12px;">
+            <i class="fa-solid fa-file-csv"></i> 匯出 CSV
+          </button>
+          <button type="button" class="btn btn-secondary flex-1" id="btn-export-json" style="padding:10px 4px;font-size:12px;">
+            <i class="fa-solid fa-file-export"></i> 備份 JSON
+          </button>
+          <button type="button" class="btn btn-secondary flex-1" id="btn-import-json" style="padding:10px 4px;font-size:12px;border-color:var(--orange-glow);color:var(--orange-400);">
+            <i class="fa-solid fa-file-import"></i> 匯入舊版紀錄
+          </button>
+        </div>
+        <input type="file" id="file-import-json" accept=".json,application/json" style="display:none;">
+        <span class="form-hint mb-4" style="display:block;">支援匯入舊版紀錄或 JSON 備份檔；若有設定 Google Sheet 亦可直接連線雲端載入。</span>
 
         <!-- Danger Zone -->
         <div class="danger-zone">

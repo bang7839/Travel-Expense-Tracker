@@ -1633,6 +1633,8 @@ const SettingsForm = (() => {
   // ── Internal card list (maintained in memory while modal is open) ──
   let _cards = []; // array of { name, billingDay }
 
+  let _editingIdx = -1; // index of card being edited, or -1 for "add new"
+
   function _renderCardList() {
     const container = document.getElementById('card-list');
     if (!container) return;
@@ -1641,17 +1643,48 @@ const SettingsForm = (() => {
       return;
     }
     container.innerHTML = _cards.map((c, i) => `
-      <div style="display:flex;align-items:center;gap:8px;background:var(--glass-bg);border:1px solid var(--glass-border);border-radius:var(--r-md);padding:8px 12px;">
+      <div style="display:flex;align-items:center;gap:8px;background:${_editingIdx === i ? 'rgba(255,165,0,0.12)' : 'var(--glass-bg)'};border:1px solid ${_editingIdx === i ? 'var(--orange-400)' : 'var(--glass-border)'};border-radius:var(--r-md);padding:8px 12px;transition:all 0.2s;">
         <i class="fa-solid fa-credit-card" style="color:var(--orange-400);flex-shrink:0;"></i>
         <span style="flex:1;font-weight:600;font-size:var(--fz-sm);">${UI.esc(c.name)}</span>
-        ${c.billingDay ? `<span style="font-size:11px;color:var(--text-secondary);white-space:nowrap;">結帳日 ${c.billingDay} 號</span>` : ''}
-        <button type="button" onclick="SettingsForm.removeCard(${i})" style="background:none;border:none;color:var(--text-muted);padding:4px;cursor:pointer;" aria-label="刪除">
+        ${c.billingDay ? `<span style="font-size:11px;color:var(--text-secondary);white-space:nowrap;">結帳日 ${c.billingDay} 號</span>` : '<span style="font-size:11px;color:var(--text-muted);white-space:nowrap;">未設結帳日</span>'}
+        <button type="button" onclick="SettingsForm.editCard(${i})" style="background:none;border:none;color:${_editingIdx === i ? 'var(--orange-400)' : 'var(--text-muted)'};padding:4px;cursor:pointer;" aria-label="編輯" title="編輯">
+          <i class="fa-solid fa-pen-to-square" style="font-size:13px;"></i>
+        </button>
+        <button type="button" onclick="SettingsForm.removeCard(${i})" style="background:none;border:none;color:var(--text-muted);padding:4px;cursor:pointer;" aria-label="刪除" title="刪除">
           <i class="fa-solid fa-trash-can" style="font-size:12px;"></i>
         </button>
       </div>`).join('');
   }
 
+  function _syncAddBtnLabel() {
+    const btn = document.getElementById('btn-add-card');
+    if (!btn) return;
+    btn.innerHTML = _editingIdx >= 0
+      ? '<i class="fa-solid fa-check"></i>'
+      : '<i class="fa-solid fa-plus"></i>';
+    btn.title = _editingIdx >= 0 ? '確認修改' : '新增';
+  }
+
+  function editCard(idx) {
+    const c = _cards[idx];
+    if (!c) return;
+    _editingIdx = idx;
+    const nameEl = document.getElementById('s-card-name');
+    const dayEl  = document.getElementById('s-card-day');
+    if (nameEl) nameEl.value = c.name;
+    if (dayEl)  dayEl.value  = c.billingDay || '';
+    nameEl?.focus();
+    _renderCardList();
+    _syncAddBtnLabel();
+  }
+
   function removeCard(idx) {
+    if (_editingIdx === idx) {
+      _editingIdx = -1;
+      _syncAddBtnLabel();
+      document.getElementById('s-card-name').value = '';
+      document.getElementById('s-card-day').value  = '';
+    }
     _cards.splice(idx, 1);
     _renderCardList();
   }
@@ -1675,11 +1708,14 @@ const SettingsForm = (() => {
     document.getElementById('s-gas-url').value        = Store.getGasUrl();
 
     // Load credit cards (support both old string[] and new object[])
+    _editingIdx = -1;
     _cards = (s.creditCards || []).map(c =>
       typeof c === 'string' ? { name: c, billingDay: null } : { ...c }
     );
     _renderCardList();
     openModal('modal-settings');
+    // Reset add button label after modal opens (DOM must be ready)
+    setTimeout(_syncAddBtnLabel, 50);
   }
 
   function save(closeModalAfter = true) {
@@ -1719,10 +1755,18 @@ const SettingsForm = (() => {
       const name   = nameEl.value.trim();
       const day    = parseInt(dayEl.value, 10);
       if (!name) { showToast('請輸入卡片名稱！', 'warning'); return; }
-      _cards.push({ name, billingDay: (day >= 1 && day <= 31) ? day : null });
+      const billingDay = (day >= 1 && day <= 31) ? day : null;
+      if (_editingIdx >= 0 && _editingIdx < _cards.length) {
+        _cards[_editingIdx] = { name, billingDay };
+        _editingIdx = -1;
+        showToast('信用卡已更新', 'success');
+      } else {
+        _cards.push({ name, billingDay });
+      }
       nameEl.value = '';
       dayEl.value  = '';
       _renderCardList();
+      _syncAddBtnLabel();
     });
   });
 
@@ -1746,7 +1790,7 @@ const SettingsForm = (() => {
     });
   });
 
-  return { open, save, removeCard };
+  return { open, save, removeCard, editCard };
 })();
 
 /* ═══════════════════════════════════════════════════════════

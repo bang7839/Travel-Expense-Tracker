@@ -895,9 +895,6 @@ const UI = (() => {
           <div class="expense-amount">${sym}${fmtMoney(amt)}</div>
           ${conv ? `<div class="expense-converted">${esc(conv)}</div>` : ''}
         </div>
-        <button class="icon-btn" style="background:transparent;border:none;color:var(--text-muted);width:30px;height:30px;font-size:13px;" onclick="AppEvents.deleteExpense('${esc(e.id)}')" aria-label="刪除" title="刪除">
-          <i class="fa-solid fa-trash-can"></i>
-        </button>
       </div>`;
   }
 
@@ -1512,6 +1509,13 @@ const ExpenseForm = (() => {
         _attachments = [{ data: expense.attachmentData, name: expense.attachmentName || '附件', type: expense.attachmentType || '' }];
       }
       _renderAttachmentPreviews();
+    }
+
+    // Show/hide delete button based on edit vs new
+    const delBtn = document.getElementById('btn-delete-expense-form');
+    if (delBtn) {
+      delBtn.style.display = isEdit ? '' : 'none';
+      delBtn.dataset.id = isEdit ? expense.id : '';
     }
 
     openModal('modal-expense');
@@ -2188,6 +2192,15 @@ document.addEventListener('DOMContentLoaded', () => {
   // ── Expense modal close/cancel ──
   document.getElementById('btn-close-expense').addEventListener('click', () => closeModal('modal-expense'));
   document.getElementById('btn-cancel-expense').addEventListener('click', () => closeModal('modal-expense'));
+
+  // ── Delete from edit form ──
+  document.getElementById('btn-delete-expense-form')?.addEventListener('click', function() {
+    const id = this.dataset.id;
+    if (!id) return;
+    // deleteExpense shows its own confirmation dialog; close modal first
+    closeModal('modal-expense');
+    setTimeout(() => AppEvents.deleteExpense(id), 200);
+  });
 
   // ── Expense form submit ──
   document.getElementById('form-expense').addEventListener('submit', e => {

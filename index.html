@@ -359,10 +359,16 @@
         </div>
       </form>
 
-      <div class="modal-footer">
-        <button type="button" class="btn btn-secondary flex-1" id="btn-cancel-expense">取消</button>
-        <button type="submit" form="form-expense" class="btn btn-primary flex-1" id="btn-save-expense">
-          <i class="fa-solid fa-floppy-disk"></i> 儲存
+      <div class="modal-footer" style="flex-direction:column;gap:8px;">
+        <div class="flex gap-2 w-full">
+          <button type="button" class="btn btn-secondary flex-1" id="btn-cancel-expense">取消</button>
+          <button type="submit" form="form-expense" class="btn btn-primary flex-1" id="btn-save-expense">
+            <i class="fa-solid fa-floppy-disk"></i> 儲存
+          </button>
+        </div>
+        <!-- Delete button: only shown when editing an existing expense -->
+        <button type="button" class="btn btn-danger w-full" id="btn-delete-expense-form" style="display:none;font-size:13px;padding:10px;">
+          <i class="fa-solid fa-trash-can"></i> 刪除此筆消費
         </button>
       </div>
     </div>

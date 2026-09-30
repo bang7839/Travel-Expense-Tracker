@@ -666,10 +666,19 @@ const UI = (() => {
       .replace(/'/g, '&#039;');
   }
 
-  function fmtMoney(n, decimals = 0) {
-    return Number(n).toLocaleString('zh-TW', {
-      minimumFractionDigits: decimals,
-      maximumFractionDigits: decimals,
+  function fmtMoney(n, decimals) {
+    if (n == null || isNaN(n)) return '0';
+    const num = Number(n);
+    if (typeof decimals === 'number') {
+      return num.toLocaleString('zh-TW', {
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: decimals,
+      });
+    }
+    // 打多少記多少：不自動四捨五入成整數，若有小數則完整保留（最高支援至10位小數，並去除浮點運算誤差）
+    const cleanNum = Math.round(num * 1e10) / 1e10;
+    return cleanNum.toLocaleString('zh-TW', {
+      maximumFractionDigits: 10,
     });
   }
 
@@ -783,11 +792,11 @@ const UI = (() => {
     });
 
     document.getElementById('total-base').textContent =
-      `${currSym(s.baseCurrency)}${fmtMoney(Math.round(totalBase))}`;
+      `${currSym(s.baseCurrency)}${fmtMoney(Math.round(totalBase * 100) / 100)}`;
 
     const sym = currSym(s.foreignCurrency || 'JPY');
     document.getElementById('total-foreign').textContent =
-      totalForeign > 0 ? `${sym}${fmtMoney(Math.round(totalForeign))} 原幣` : '';
+      totalForeign > 0 ? `${sym}${fmtMoney(Math.round(totalForeign * 100) / 100)} 原幣` : '';
 
     document.getElementById('expense-count').textContent = exs.length;
   }
@@ -840,11 +849,6 @@ const UI = (() => {
     });
 
     container.innerHTML = html;
-
-    // Attach swipe-delete listeners
-    container.querySelectorAll('.expense-card').forEach(card => {
-      attachSwipeDelete(card);
-    });
   }
 
   function formatDateLabel(dateStr) {
@@ -863,12 +867,12 @@ const UI = (() => {
     const amt    = parseFloat(e.amount) || 0;
     const sym    = currSym(e.currency);
     const isBase = e.currency === s.baseCurrency;
-    const conv   = isBase ? '' : `≈ ${currSym(s.baseCurrency)}${fmtMoney(Math.round(amt * _rate(e.currency, s.baseCurrency)))}`;
+    const conv   = isBase ? '' : `≈ ${currSym(s.baseCurrency)}${fmtMoney(Math.round(amt * _rate(e.currency, s.baseCurrency) * 100) / 100)}`;
 
     const hasAtt  = !!e.attachmentData;
     const isImg   = hasAtt && e.attachmentType && e.attachmentType.startsWith('image/');
     const attHtml = hasAtt
-      ? `<span class="chip chip-media" onclick="AppEvents.viewAttachment('${esc(e.id)}')" title="查看附件">
+      ? `<span class="chip chip-media" onclick="event.stopPropagation(); AppEvents.viewAttachment('${esc(e.id)}')" title="查看附件">
            <i class="fa-solid ${isImg ? 'fa-image' : 'fa-paperclip'}"></i>
            ${isImg ? '相片' : '附件'}
          </span>`
@@ -879,9 +883,9 @@ const UI = (() => {
     const methodChip = `<span class="chip chip-other" style="font-size:10px;">${isCash ? '💵' : '💳'} ${esc(method.replace('信用卡(','').replace(')',''))}</span>`;
 
     return `
-      <div class="expense-card" data-id="${esc(e.id)}" role="listitem">
-        <div class="cat-avatar ${meta.cls}" aria-label="${esc(e.category)}" onclick="AppEvents.editExpense('${esc(e.id)}')">${meta.icon}</div>
-        <div class="expense-info" onclick="AppEvents.editExpense('${esc(e.id)}')">
+      <div class="expense-card" data-id="${esc(e.id)}" onclick="AppEvents.editExpense('${esc(e.id)}')" role="button" tabindex="0" title="點擊修改消費明細">
+        <div class="cat-avatar ${meta.cls}" aria-label="${esc(e.category)}">${meta.icon}</div>
+        <div class="expense-info">
           <div class="expense-title">${esc(e.title)}</div>
           <div class="expense-meta">
             <span class="expense-meta-text">${esc(e.paidBy)}</span>
@@ -891,9 +895,12 @@ const UI = (() => {
           </div>
           ${e.note ? `<div class="expense-meta" style="margin-top:2px;"><span class="expense-meta-text" style="opacity:0.7;"><i class="fa-regular fa-note-sticky"></i> ${esc(e.note)}</span></div>` : ''}
         </div>
-        <div class="expense-amount-area" onclick="AppEvents.editExpense('${esc(e.id)}')">
+        <div class="expense-amount-area">
           <div class="expense-amount">${sym}${fmtMoney(amt)}</div>
           ${conv ? `<div class="expense-converted">${esc(conv)}</div>` : ''}
+        </div>
+        <div class="expense-card-edit-btn" title="修改" aria-hidden="true">
+          <i class="fa-solid fa-chevron-right"></i>
         </div>
       </div>`;
   }
@@ -934,8 +941,9 @@ const UI = (() => {
     } else {
       balContainer.innerHTML = members.map(m => {
         const net   = balance[m] || 0;
-        const isPos = net > 0.5;
-        const isNeg = net < -0.5;
+        const roundedNet = Math.round(net * 100) / 100;
+        const isPos = roundedNet > 0.005;
+        const isNeg = roundedNet < -0.005;
         const cls   = isPos ? 'amount-positive' : (isNeg ? 'amount-negative' : 'amount-zero');
         const label = isPos ? '可收回' : (isNeg ? '尚需付' : '已結清');
         return `
@@ -945,7 +953,7 @@ const UI = (() => {
               <span style="font-size:var(--fz-sm);font-weight:600;">${esc(m)}</span>
             </div>
             <span class="${cls}" style="font-size:var(--fz-sm);">
-              ${label} ${sym}${fmtMoney(Math.abs(Math.round(net)))}
+              ${label} ${sym}${fmtMoney(Math.abs(roundedNet))}
             </span>
           </div>`;
       }).join('');
@@ -955,9 +963,9 @@ const UI = (() => {
     const debtors   = [];
     const creditors = [];
     Object.entries(balance).forEach(([m, v]) => {
-      const rv = Math.round(v);
-      if (rv < -1)   debtors.push({ name: m, amount: -rv });
-      else if (rv > 1) creditors.push({ name: m, amount: rv });
+      const rv = Math.round(v * 100) / 100;
+      if (rv < -0.005)   debtors.push({ name: m, amount: -rv });
+      else if (rv > 0.005) creditors.push({ name: m, amount: rv });
     });
 
     const planContainer = document.getElementById('settlement-plan');
@@ -974,12 +982,12 @@ const UI = (() => {
     const cCopy = creditors.map(c => ({ ...c }));
 
     while (i < dCopy.length && j < cCopy.length) {
-      const pay = Math.min(dCopy[i].amount, cCopy[j].amount);
+      const pay = Math.round(Math.min(dCopy[i].amount, cCopy[j].amount) * 100) / 100;
       transfers.push({ from: dCopy[i].name, to: cCopy[j].name, amount: pay });
-      dCopy[i].amount -= pay;
-      cCopy[j].amount -= pay;
-      if (dCopy[i].amount === 0) i++;
-      if (cCopy[j].amount === 0) j++;
+      dCopy[i].amount = Math.round((dCopy[i].amount - pay) * 100) / 100;
+      cCopy[j].amount = Math.round((cCopy[j].amount - pay) * 100) / 100;
+      if (dCopy[i].amount <= 0.005) i++;
+      if (cCopy[j].amount <= 0.005) j++;
     }
 
     planContainer.innerHTML = transfers.map(t => `
@@ -1032,7 +1040,7 @@ const UI = (() => {
             <div class="stat-bar-row">
               <div class="stat-bar-label">
                 <span class="stat-bar-cat">${meta.icon} ${esc(cat)}</span>
-                <span class="stat-bar-val">${currSym(s.baseCurrency)}${fmtMoney(Math.round(amt))} (${pct}%)</span>
+                <span class="stat-bar-val">${currSym(s.baseCurrency)}${fmtMoney(Math.round(amt * 100) / 100)} (${pct}%)</span>
               </div>
               <div class="stat-bar-track">
                 <div class="stat-bar-fill" style="width:${pct}%"></div>
@@ -1054,7 +1062,7 @@ const UI = (() => {
             <div class="stat-bar-row">
               <div class="stat-bar-label">
                 <span class="stat-bar-cat">${esc(method)}</span>
-                <span class="stat-bar-val">${currSym(s.baseCurrency)}${fmtMoney(Math.round(amt))} (${pct}%)</span>
+                <span class="stat-bar-val">${currSym(s.baseCurrency)}${fmtMoney(Math.round(amt * 100) / 100)} (${pct}%)</span>
               </div>
               <div class="stat-bar-track">
                 <div class="stat-bar-fill fill-ocean" style="width:${pct}%"></div>
@@ -1130,7 +1138,7 @@ const UI = (() => {
               ${esc(cardName)}
               <span style="font-size:10px;color:var(--text-muted);font-weight:400;">(結帳日 ${billingDay} 號)</span>
             </span>
-            <span style="font-weight:700;color:var(--orange-400);">${sym}${fmtMoney(Math.round(total))}</span>
+            <span style="font-weight:700;color:var(--orange-400);">${sym}${fmtMoney(Math.round(total * 100) / 100)}</span>
           </div>
           <div style="font-size:11px;color:var(--text-muted);margin-bottom:var(--sp-2);">
             📅 ${start} ～ ${end}　共 ${cycleExs.length} 筆
@@ -1140,7 +1148,7 @@ const UI = (() => {
             : recentExs.map(e => {
                 const amt = parseFloat(e.amount) || 0;
                 const rate = _rate(e.currency, s.baseCurrency);
-                const base = Math.round(amt * rate);
+                const base = Math.round(amt * rate * 100) / 100;
                 return `
                   <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;font-size:var(--fz-sm);">
                     <span style="color:var(--text-secondary);">${esc(e.date)} ${esc(e.title)}</span>
@@ -1475,8 +1483,23 @@ const ExpenseForm = (() => {
     });
     document.getElementById('expense-category').value = isEdit ? expense.category : '餐飲';
 
-    // Currency
-    if (isEdit) document.getElementById('expense-currency').value = expense.currency;
+    // Currency: 紀錄上一筆幣別，新增時自動帶入，避免每次重選
+    const currSelect = document.getElementById('expense-currency');
+    if (currSelect) {
+      if (isEdit) {
+        currSelect.value = expense.currency;
+      } else {
+        const exs = Store.expenses();
+        const lastExp = exs.length > 0 ? exs[exs.length - 1] : null;
+        const remembered = localStorage.getItem('travelpay_last_currency_' + Store.currentTripId)
+          || (lastExp ? lastExp.currency : null)
+          || Store.settings().foreignCurrency
+          || 'JPY';
+        if ([...currSelect.options].some(o => o.value === remembered)) {
+          currSelect.value = remembered;
+        }
+      }
+    }
 
     // Payer
     if (isEdit) document.getElementById('expense-paid-by').value = expense.paidBy;
@@ -1511,12 +1534,11 @@ const ExpenseForm = (() => {
       _renderAttachmentPreviews();
     }
 
-    // Show/hide delete button based on edit vs new
+    // Show/hide delete button based on edit vs new (安全分離式刪除按鈕)
+    const delContainer = document.getElementById('delete-expense-container');
     const delBtn = document.getElementById('btn-delete-expense-form');
-    if (delBtn) {
-      delBtn.style.display = isEdit ? '' : 'none';
-      delBtn.dataset.id = isEdit ? expense.id : '';
-    }
+    if (delContainer) delContainer.style.display = isEdit ? 'block' : 'none';
+    if (delBtn) delBtn.dataset.id = isEdit ? expense.id : '';
 
     openModal('modal-expense');
     setTimeout(() => document.getElementById('expense-amount').focus(), 300);
@@ -1560,6 +1582,7 @@ const ExpenseForm = (() => {
     }
 
     if (saved) {
+      localStorage.setItem('travelpay_last_currency_' + Store.currentTripId, currency);
       closeModal('modal-expense');
       UI.renderAll();
       showToast(id ? '消費已更新' : '記帳成功！', 'success');
@@ -1798,39 +1821,7 @@ const SettingsForm = (() => {
    ═══════════════════════════════════════════════════════════ */
 
 function attachSwipeDelete(card) {
-  let startX = 0;
-  let currentX = 0;
-  let isDragging = false;
-
-  card.addEventListener('touchstart', e => {
-    startX = e.touches[0].clientX;
-    isDragging = true;
-    card.classList.add('is-swiping');
-  }, { passive: true });
-
-  card.addEventListener('touchmove', e => {
-    if (!isDragging) return;
-    currentX = e.touches[0].clientX;
-    const diff = currentX - startX;
-    if (diff < 0) {
-      card.style.transform = `translateX(${Math.max(diff, -80)}px)`;
-    }
-  }, { passive: true });
-
-  card.addEventListener('touchend', () => {
-    isDragging = false;
-    card.classList.remove('is-swiping');
-    const diff = currentX - startX;
-    if (diff < -60) {
-      // Confirmed swipe-delete
-      const id = card.dataset.id;
-      card.style.transform = 'translateX(-80px)';
-      AppEvents.deleteExpense(id);
-    } else {
-      card.style.transform = '';
-    }
-    startX = 0; currentX = 0;
-  });
+  // Disabled: prevent accidental delete triggers when tapping to edit on mobile
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -1844,7 +1835,7 @@ function exportCSV() {
   const header = ['日期', '名稱', '分類', '付款人', '付款方式', '幣別', '金額', `換算${s.baseCurrency}`, '分攤成員', '備註'];
   const rows   = exs.map(e => {
     const rate = e.currency === s.baseCurrency ? 1 : (ExchangeRate.getCached(e.currency, s.baseCurrency) || 1);
-    const base = Math.round((parseFloat(e.amount) || 0) * rate);
+    const base = Math.round((parseFloat(e.amount) || 0) * rate * 100) / 100;
     return [
       e.date, e.title, e.category, e.paidBy, e.paymentMethod,
       e.currency, e.amount, base,
@@ -2244,6 +2235,13 @@ document.addEventListener('DOMContentLoaded', () => {
     // deleteExpense shows its own confirmation dialog; close modal first
     closeModal('modal-expense');
     setTimeout(() => AppEvents.deleteExpense(id), 200);
+  });
+
+  // ── Expense currency change: remember selected currency ──
+  document.getElementById('expense-currency')?.addEventListener('change', function() {
+    if (Store.currentTripId) {
+      localStorage.setItem('travelpay_last_currency_' + Store.currentTripId, this.value);
+    }
   });
 
   // ── Expense form submit ──

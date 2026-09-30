@@ -282,7 +282,7 @@
               <option value="EUR">EUR €</option>
               <option value="THB">THB ฿</option>
             </select>
-            <input type="number" step="0.01" id="expense-amount" class="amount-input" placeholder="0" aria-label="金額" autocomplete="off">
+            <input type="number" step="any" id="expense-amount" class="amount-input" placeholder="0" aria-label="金額" autocomplete="off">
           </div>
         </div>
 
@@ -359,17 +359,19 @@
         </div>
       </form>
 
-      <div class="modal-footer" style="flex-direction:column;gap:8px;">
+      <div class="modal-footer" style="flex-direction:column;gap:10px;">
         <div class="flex gap-2 w-full">
           <button type="button" class="btn btn-secondary flex-1" id="btn-cancel-expense">取消</button>
           <button type="submit" form="form-expense" class="btn btn-primary flex-1" id="btn-save-expense">
             <i class="fa-solid fa-floppy-disk"></i> 儲存
           </button>
         </div>
-        <!-- Delete button: only shown when editing an existing expense -->
-        <button type="button" class="btn btn-danger w-full" id="btn-delete-expense-form" style="display:none;font-size:13px;padding:10px;">
-          <i class="fa-solid fa-trash-can"></i> 刪除此筆消費
-        </button>
+        <!-- Delete button: separated with a divider and distinct subtle styling to avoid accidental mis-clicks -->
+        <div id="delete-expense-container" style="display:none;width:100%;margin-top:8px;padding-top:10px;border-top:1px dashed var(--glass-border);text-align:center;">
+          <button type="button" class="btn-delete-subtle" id="btn-delete-expense-form">
+            <i class="fa-regular fa-trash-can"></i> 刪除此筆消費
+          </button>
+        </div>
       </div>
     </div>
   </div>

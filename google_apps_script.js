@@ -31,12 +31,16 @@ function doGet(e) {
     // 收集所有行程設定 (SETTINGS_CONFIG_tripId)
     if (row[0] && row[0].toString().indexOf('SETTINGS_CONFIG') === 0) {
       try {
-        var parsedSettings = JSON.parse(row[1]);
+        var parsedBlob = JSON.parse(row[1]);
+        // 支援新格式 { settings, links } 及舊格式（直接是 settings 物件）
+        var parsedSettings = parsedBlob.settings !== undefined ? parsedBlob.settings : parsedBlob;
+        var parsedLinks    = Array.isArray(parsedBlob.links) ? parsedBlob.links : [];
         var keyParts = row[0].toString().split('_');
         var tId = keyParts.length > 2 ? keyParts.slice(2).join('_') : 'trip_default';
         allTrips[tId] = {
           id: tId,
-          settings: parsedSettings
+          settings: parsedSettings,
+          links: parsedLinks
         };
 
         if (!targetTripId || row[0] === ('SETTINGS_CONFIG_' + targetTripId) || row[0] === 'SETTINGS_CONFIG') {
@@ -106,7 +110,8 @@ function doPost(e) {
           break;
         }
       }
-      var jsonStr = JSON.stringify(postData.settings);
+      // 將 settings 與 links 合併存入同一欄位，確保跨裝置同步
+      var jsonStr = JSON.stringify({ settings: postData.settings, links: postData.links || [] });
       if (foundRow > 0) {
         sheet.getRange(foundRow, 2).setValue(jsonStr);
       } else {

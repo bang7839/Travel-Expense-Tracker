@@ -768,6 +768,44 @@
   margin-top: 1px;
 }
 
+.expense-card-edit-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 13px;
+  flex-shrink: 0;
+  opacity: 0.45;
+  transition: all var(--t-fast);
+  margin-left: 2px;
+}
+
+.expense-card:hover .expense-card-edit-btn {
+  opacity: 1;
+  color: var(--orange-400);
+  transform: translateX(2px);
+}
+
+.btn-delete-subtle {
+  background: transparent;
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  color: #ef4444;
+  font-size: 13px;
+  padding: 7px 16px;
+  border-radius: var(--r-md);
+  cursor: pointer;
+  transition: all var(--t-fast);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-delete-subtle:hover {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.5);
+  color: #f87171;
+}
+
 /* ── Empty State ── */
 .empty-state {
   display: flex;

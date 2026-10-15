@@ -21,7 +21,7 @@ const DEFAULT_OWNER_PWD = '1234';
 const DEFAULT_MEMBER_PWD = '0000';
 
 const CURRENCY_SYMBOLS = {
-  JPY: '¥', KRW: '₩', USD: '$', EUR: '€', THB: '฿', TWD: '$', HKD: '$'
+  JPY: '¥', KRW: '₩', USD: '$', EUR: '€', THB: '฿', TWD: 'NT$', HKD: 'HK$'
 };
 
 const CATEGORY_META = {
@@ -778,25 +778,34 @@ const UI = (() => {
     const s   = Store.settings();
     const exs = Store.expenses();
 
-    let totalBase    = 0;
-    let totalForeign = 0;
+    let totalBase = 0;
+    const foreignTotals = {};
 
     exs.forEach(e => {
       const amt = parseFloat(e.amount) || 0;
       if (e.currency === s.baseCurrency) {
         totalBase += amt;
       } else {
-        totalForeign += amt;
-        totalBase    += amt * _rate(e.currency, s.baseCurrency);
+        const curr = e.currency || 'OTHER';
+        foreignTotals[curr] = (foreignTotals[curr] || 0) + amt;
+        totalBase += amt * _rate(e.currency, s.baseCurrency);
       }
     });
+
+    const labelEl = document.getElementById('summary-base-label') || document.querySelector('.summary-total-label');
+    if (labelEl) labelEl.textContent = `總支出 (${s.baseCurrency})`;
 
     document.getElementById('total-base').textContent =
       `${currSym(s.baseCurrency)}${fmtMoney(Math.round(totalBase * 100) / 100)}`;
 
-    const sym = currSym(s.foreignCurrency || 'JPY');
-    document.getElementById('total-foreign').textContent =
-      totalForeign > 0 ? `${sym}${fmtMoney(Math.round(totalForeign * 100) / 100)} 原幣` : '';
+    const foreignEntries = Object.entries(foreignTotals);
+    if (foreignEntries.length > 0) {
+      document.getElementById('total-foreign').textContent = foreignEntries
+        .map(([curr, amt]) => `${currSym(curr)}${fmtMoney(Math.round(amt * 100) / 100)} 原幣`)
+        .join(' · ');
+    } else {
+      document.getElementById('total-foreign').textContent = '';
+    }
 
     document.getElementById('expense-count').textContent = exs.length;
   }

@@ -48,7 +48,6 @@ const Store = (() => {
       settings: {
         tripName:       name,
         baseCurrency:   'TWD',
-        foreignCurrency:'JPY',
         members:        ['小明', '小美', '阿強'],
         creditCards:    [
           { name: '玉山FlyGo', billingDay: 25 },
@@ -502,6 +501,26 @@ const Auth = (() => {
 const ExchangeRate = (() => {
   const CACHE_KEY  = 'travelpay_fx_cache';
   const CACHE_TTL  = 6 * 60 * 60 * 1000; // 6 hours
+  const _pending   = new Set();
+
+  // 常見貨幣合理備用匯率（避免在離線、網路延遲或 API 異常時將 1 美金誤算為 1 台幣！）
+  const FALLBACK_RATES = {
+    // Foreign to TWD
+    'USD_TWD': 32.5,  'TWD_USD': 1 / 32.5,
+    'EUR_TWD': 35.0,  'TWD_EUR': 1 / 35.0,
+    'JPY_TWD': 0.215, 'TWD_JPY': 1 / 0.215,
+    'KRW_TWD': 0.024, 'TWD_KRW': 1 / 0.024,
+    'THB_TWD': 0.95,  'TWD_THB': 1 / 0.95,
+    'HKD_TWD': 4.15,  'TWD_HKD': 1 / 4.15,
+    'GBP_TWD': 42.0,  'TWD_GBP': 1 / 42.0,
+    // Cross to USD
+    'EUR_USD': 1.08,  'USD_EUR': 1 / 1.08,
+    'GBP_USD': 1.30,  'USD_GBP': 1 / 1.30,
+    'JPY_USD': 0.0066,'USD_JPY': 1 / 0.0066,
+    'KRW_USD': 0.00074,'USD_KRW': 1 / 0.00074,
+    'THB_USD': 0.029, 'USD_THB': 1 / 0.029,
+    'HKD_USD': 0.128, 'USD_HKD': 1 / 0.128,
+  };
 
   function _load() {
     try { return JSON.parse(localStorage.getItem(CACHE_KEY)) || {}; } catch { return {}; }
@@ -516,7 +535,7 @@ const ExchangeRate = (() => {
    * Returns cached value immediately if fresh; fetches in background otherwise.
    */
   async function getRate(foreign, base) {
-    if (foreign === base) return 1;
+    if (!foreign || !base || foreign === base) return 1;
     const key = `${foreign}_${base}`;
     const cache = _load();
     const entry = cache[key];
@@ -545,18 +564,57 @@ const ExchangeRate = (() => {
         return rate;
       }
     } catch { /* both failed */ }
-    // Return last cached even if stale, or 1 as fallback
-    return entry?.rate ?? 1;
+    // Return last cached even if stale, or fallback rate
+    return entry?.rate ?? (FALLBACK_RATES[key] || 1);
   }
 
   function getCached(foreign, base) {
-    if (foreign === base) return 1;
+    if (!foreign || !base || foreign === base) return 1;
     const key = `${foreign}_${base}`;
     const entry = _load()[key];
-    return entry?.rate ?? null;
+    if (entry && entry.rate) {
+      return entry.rate;
+    }
+
+    // 若快取尚未取得，自動觸發非同步抓取，並於成功後即時刷新介面
+    if (!_pending.has(key)) {
+      _pending.add(key);
+      getRate(foreign, base).then(() => {
+        _pending.delete(key);
+        if (typeof UI !== 'undefined' && UI.renderAll) {
+          UI.renderAll();
+        }
+      }).catch(() => _pending.delete(key));
+    }
+
+    return FALLBACK_RATES[key] || 1;
   }
 
-  return { getRate, getCached };
+  async function syncAll() {
+    if (typeof Store === 'undefined') return;
+    const s = Store.settings();
+    const list = new Set([
+      s.foreignCurrency,
+      ...Store.expenses().map(e => e.currency)
+    ]);
+    list.delete(s.baseCurrency);
+    list.delete('');
+    list.delete(null);
+    list.delete(undefined);
+
+    let changed = false;
+    for (const c of list) {
+      if (c) {
+        await getRate(c, s.baseCurrency);
+        changed = true;
+      }
+    }
+    if (changed && typeof UI !== 'undefined' && UI.renderAll) {
+      UI.renderAll();
+    }
+  }
+
+  return { getRate, getCached, syncAll };
 })();
 
 /* ═══════════════════════════════════════════════════════════
@@ -666,19 +724,46 @@ const UI = (() => {
       .replace(/'/g, '&#039;');
   }
 
-  function fmtMoney(n, decimals) {
+  // 台幣、日幣、韓幣等在日常記帳與折算中無小數，生活化取整數
+  const ZERO_DECIMAL_CURRENCIES = new Set(['TWD', 'JPY', 'KRW', 'VND', 'IDR']);
+
+  function isZeroDecimal(code) {
+    if (!code) return false;
+    return ZERO_DECIMAL_CURRENCIES.has(String(code).toUpperCase());
+  }
+
+  function fmtMoney(n, currencyOrDecimals) {
     if (n == null || isNaN(n)) return '0';
     const num = Number(n);
-    if (typeof decimals === 'number') {
+
+    // 1. 若明確傳入小數位數數字 (例如 0 或 2)
+    if (typeof currencyOrDecimals === 'number') {
       return num.toLocaleString('zh-TW', {
-        minimumFractionDigits: decimals,
-        maximumFractionDigits: decimals,
+        minimumFractionDigits: currencyOrDecimals,
+        maximumFractionDigits: currencyOrDecimals,
       });
     }
-    // 打多少記多少：不自動四捨五入成整數，若有小數則完整保留（最高支援至10位小數，並去除浮點運算誤差）
-    const cleanNum = Math.round(num * 1e10) / 1e10;
+
+    // 2. 若傳入貨幣代碼 (例如 'TWD', 'JPY', 'USD')
+    if (typeof currencyOrDecimals === 'string') {
+      if (isZeroDecimal(currencyOrDecimals)) {
+        // 台幣、日幣、韓幣等生活與記帳中無小數，人性化四捨五入為整數，絕不出現怪異的小數點！
+        return Math.round(num).toLocaleString('zh-TW', {
+          maximumFractionDigits: 0,
+        });
+      }
+      // 美金、歐元等貨幣：若有小數則保留小數（最多2位），整數則顯示整數
+      const clean = Math.round(num * 100) / 100;
+      return clean.toLocaleString('zh-TW', {
+        minimumFractionDigits: (clean % 1 !== 0) ? (clean.toString().split('.')[1]?.length || 2) : 0,
+        maximumFractionDigits: 2,
+      });
+    }
+
+    // 3. 預設：整數顯示整數，小數最多2位
+    const cleanNum = Math.round(num * 100) / 100;
     return cleanNum.toLocaleString('zh-TW', {
-      maximumFractionDigits: 10,
+      maximumFractionDigits: 2,
     });
   }
 
@@ -735,6 +820,7 @@ const UI = (() => {
       Store.unlock('owner');
       hideLockScreen();
       renderAll();
+      ExchangeRate.syncAll();
       return;
     }
     showLockScreen();
@@ -744,10 +830,16 @@ const UI = (() => {
   function renderHeader() {
     const s = Store.settings();
     document.getElementById('trip-name-display').textContent = s.tripName;
-    const fc = s.foreignCurrency || 'JPY';
+    
+    // 優先挑選此行程實際有使用的外幣，若無則依序使用 foreignCurrency 或 USD
+    const usedForeign = Store.expenses().map(e => e.currency).find(c => c && c !== s.baseCurrency);
+    const fc = usedForeign || s.foreignCurrency || (s.baseCurrency === 'USD' ? 'TWD' : 'USD');
     const cachedRate = ExchangeRate.getCached(fc, s.baseCurrency);
-    const rateLabel = cachedRate
-      ? `1 ${fc} ≈ ${cachedRate.toFixed(cachedRate < 1 ? 4 : 2)} ${s.baseCurrency}`
+    const rateFormatted = cachedRate
+      ? (cachedRate < 1 ? cachedRate.toFixed(4) : (isZeroDecimal(s.baseCurrency) ? (Math.round(cachedRate * 100) / 100).toFixed(2) : cachedRate.toFixed(2)))
+      : null;
+    const rateLabel = rateFormatted
+      ? `1 ${fc} ≈ ${rateFormatted} ${s.baseCurrency}`
       : `匯率同步中…`;
     document.getElementById('trip-subtitle').textContent =
       `主幣別：${s.baseCurrency}  ·  ${rateLabel}`;
@@ -795,13 +887,15 @@ const UI = (() => {
     const labelEl = document.getElementById('summary-base-label') || document.querySelector('.summary-total-label');
     if (labelEl) labelEl.textContent = `總支出 (${s.baseCurrency})`;
 
+    // 主幣別若是台幣、日幣、韓幣，一律四捨五入為整數，絕不出現小數點！
     document.getElementById('total-base').textContent =
-      `${currSym(s.baseCurrency)}${fmtMoney(Math.round(totalBase * 100) / 100)}`;
+      `${currSym(s.baseCurrency)}${fmtMoney(totalBase, s.baseCurrency)}`;
 
+    // 原幣支出：只有當存在外幣消費時才顯示，清楚標註幣別，避免與主幣別混淆
     const foreignEntries = Object.entries(foreignTotals);
     if (foreignEntries.length > 0) {
       document.getElementById('total-foreign').textContent = foreignEntries
-        .map(([curr, amt]) => `${currSym(curr)}${fmtMoney(Math.round(amt * 100) / 100)} 原幣`)
+        .map(([curr, amt]) => `原幣 ${currSym(curr)}${fmtMoney(amt, curr)} ${curr}`)
         .join(' · ');
     } else {
       document.getElementById('total-foreign').textContent = '';
@@ -876,7 +970,11 @@ const UI = (() => {
     const amt    = parseFloat(e.amount) || 0;
     const sym    = currSym(e.currency);
     const isBase = e.currency === s.baseCurrency;
-    const conv   = isBase ? '' : `≈ ${currSym(s.baseCurrency)}${fmtMoney(Math.round(amt * _rate(e.currency, s.baseCurrency) * 100) / 100)}`;
+    let conv = '';
+    if (!isBase) {
+      const baseAmt = amt * _rate(e.currency, s.baseCurrency);
+      conv = `≈ ${currSym(s.baseCurrency)}${fmtMoney(baseAmt, s.baseCurrency)}`;
+    }
 
     const hasAtt  = !!e.attachmentData;
     const isImg   = hasAtt && e.attachmentType && e.attachmentType.startsWith('image/');
@@ -905,7 +1003,7 @@ const UI = (() => {
           ${e.note ? `<div class="expense-meta" style="margin-top:2px;"><span class="expense-meta-text" style="opacity:0.7;"><i class="fa-regular fa-note-sticky"></i> ${esc(e.note)}</span></div>` : ''}
         </div>
         <div class="expense-amount-area">
-          <div class="expense-amount">${sym}${fmtMoney(amt)}</div>
+          <div class="expense-amount">${sym}${fmtMoney(amt, e.currency)}</div>
           ${conv ? `<div class="expense-converted">${esc(conv)}</div>` : ''}
         </div>
         <div class="expense-card-edit-btn" title="修改" aria-hidden="true">
@@ -944,15 +1042,18 @@ const UI = (() => {
     // Render member balances
     const balContainer = document.getElementById('member-balances');
     const sym = currSym(s.baseCurrency);
+    const isZeroDec = isZeroDecimal(s.baseCurrency);
+    const threshold = isZeroDec ? 0.5 : 0.005;
+    const roundVal  = val => isZeroDec ? Math.round(val) : Math.round(val * 100) / 100;
 
     if (members.length === 0) {
       balContainer.innerHTML = `<p style="color:var(--text-muted);font-size:var(--fz-sm);text-align:center;">尚未設定成員</p>`;
     } else {
       balContainer.innerHTML = members.map(m => {
         const net   = balance[m] || 0;
-        const roundedNet = Math.round(net * 100) / 100;
-        const isPos = roundedNet > 0.005;
-        const isNeg = roundedNet < -0.005;
+        const roundedNet = roundVal(net);
+        const isPos = roundedNet >= threshold;
+        const isNeg = roundedNet <= -threshold;
         const cls   = isPos ? 'amount-positive' : (isNeg ? 'amount-negative' : 'amount-zero');
         const label = isPos ? '可收回' : (isNeg ? '尚需付' : '已結清');
         return `
@@ -962,7 +1063,7 @@ const UI = (() => {
               <span style="font-size:var(--fz-sm);font-weight:600;">${esc(m)}</span>
             </div>
             <span class="${cls}" style="font-size:var(--fz-sm);">
-              ${label} ${sym}${fmtMoney(Math.abs(roundedNet))}
+              ${label} ${sym}${fmtMoney(Math.abs(roundedNet), s.baseCurrency)}
             </span>
           </div>`;
       }).join('');
@@ -972,9 +1073,9 @@ const UI = (() => {
     const debtors   = [];
     const creditors = [];
     Object.entries(balance).forEach(([m, v]) => {
-      const rv = Math.round(v * 100) / 100;
-      if (rv < -0.005)   debtors.push({ name: m, amount: -rv });
-      else if (rv > 0.005) creditors.push({ name: m, amount: rv });
+      const rv = roundVal(v);
+      if (rv <= -threshold) debtors.push({ name: m, amount: -rv });
+      else if (rv >= threshold) creditors.push({ name: m, amount: rv });
     });
 
     const planContainer = document.getElementById('settlement-plan');
@@ -991,12 +1092,12 @@ const UI = (() => {
     const cCopy = creditors.map(c => ({ ...c }));
 
     while (i < dCopy.length && j < cCopy.length) {
-      const pay = Math.round(Math.min(dCopy[i].amount, cCopy[j].amount) * 100) / 100;
+      const pay = roundVal(Math.min(dCopy[i].amount, cCopy[j].amount));
       transfers.push({ from: dCopy[i].name, to: cCopy[j].name, amount: pay });
-      dCopy[i].amount = Math.round((dCopy[i].amount - pay) * 100) / 100;
-      cCopy[j].amount = Math.round((cCopy[j].amount - pay) * 100) / 100;
-      if (dCopy[i].amount <= 0.005) i++;
-      if (cCopy[j].amount <= 0.005) j++;
+      dCopy[i].amount = roundVal(dCopy[i].amount - pay);
+      cCopy[j].amount = roundVal(cCopy[j].amount - pay);
+      if (dCopy[i].amount < threshold) i++;
+      if (cCopy[j].amount < threshold) j++;
     }
 
     planContainer.innerHTML = transfers.map(t => `
@@ -1005,13 +1106,14 @@ const UI = (() => {
           <i class="fa-solid fa-arrow-right-long" style="color:var(--teal-400);flex-shrink:0;"></i>
           <span class="settle-names"><b>${esc(t.from)}</b> → <b>${esc(t.to)}</b></span>
         </div>
-        <span class="settle-amount">${sym}${fmtMoney(t.amount)}</span>
+        <span class="settle-amount">${sym}${fmtMoney(t.amount, s.baseCurrency)}</span>
       </div>`).join('');
 
     // Store for copy function
     planContainer.dataset.transfers = JSON.stringify(transfers.map(t => ({
       ...t,
       sym,
+      amountFormatted: fmtMoney(t.amount, s.baseCurrency),
     })));
   }
 
@@ -1049,7 +1151,7 @@ const UI = (() => {
             <div class="stat-bar-row">
               <div class="stat-bar-label">
                 <span class="stat-bar-cat">${meta.icon} ${esc(cat)}</span>
-                <span class="stat-bar-val">${currSym(s.baseCurrency)}${fmtMoney(Math.round(amt * 100) / 100)} (${pct}%)</span>
+                <span class="stat-bar-val">${currSym(s.baseCurrency)}${fmtMoney(amt, s.baseCurrency)} (${pct}%)</span>
               </div>
               <div class="stat-bar-track">
                 <div class="stat-bar-fill" style="width:${pct}%"></div>
@@ -1071,7 +1173,7 @@ const UI = (() => {
             <div class="stat-bar-row">
               <div class="stat-bar-label">
                 <span class="stat-bar-cat">${esc(method)}</span>
-                <span class="stat-bar-val">${currSym(s.baseCurrency)}${fmtMoney(Math.round(amt * 100) / 100)} (${pct}%)</span>
+                <span class="stat-bar-val">${currSym(s.baseCurrency)}${fmtMoney(amt, s.baseCurrency)} (${pct}%)</span>
               </div>
               <div class="stat-bar-track">
                 <div class="stat-bar-fill fill-ocean" style="width:${pct}%"></div>
@@ -1147,7 +1249,7 @@ const UI = (() => {
               ${esc(cardName)}
               <span style="font-size:10px;color:var(--text-muted);font-weight:400;">(結帳日 ${billingDay} 號)</span>
             </span>
-            <span style="font-weight:700;color:var(--orange-400);">${sym}${fmtMoney(Math.round(total * 100) / 100)}</span>
+            <span style="font-weight:700;color:var(--orange-400);">${sym}${fmtMoney(total, s.baseCurrency)}</span>
           </div>
           <div style="font-size:11px;color:var(--text-muted);margin-bottom:var(--sp-2);">
             📅 ${start} ～ ${end}　共 ${cycleExs.length} 筆
@@ -1157,11 +1259,11 @@ const UI = (() => {
             : recentExs.map(e => {
                 const amt = parseFloat(e.amount) || 0;
                 const rate = _rate(e.currency, s.baseCurrency);
-                const base = Math.round(amt * rate * 100) / 100;
+                const base = amt * rate;
                 return `
                   <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;font-size:var(--fz-sm);">
                     <span style="color:var(--text-secondary);">${esc(e.date)} ${esc(e.title)}</span>
-                    <span style="font-weight:600;">${currSym(e.currency)}${fmtMoney(amt)}${e.currency !== s.baseCurrency ? ` <span style="font-size:10px;color:var(--text-muted);">≈${sym}${fmtMoney(base)}</span>` : ''}</span>
+                    <span style="font-weight:600;">${currSym(e.currency)}${fmtMoney(amt, e.currency)}${e.currency !== s.baseCurrency ? ` <span style="font-size:10px;color:var(--text-muted);">≈${sym}${fmtMoney(base, s.baseCurrency)}</span>` : ''}</span>
                   </div>`;
               }).join('')
           }
@@ -1503,7 +1605,8 @@ const ExpenseForm = (() => {
         const remembered = localStorage.getItem('travelpay_last_currency_' + Store.currentTripId)
           || (lastExp ? lastExp.currency : null)
           || Store.settings().foreignCurrency
-          || 'JPY';
+          || Store.settings().baseCurrency
+          || 'TWD';
         if ([...currSelect.options].some(o => o.value === remembered)) {
           currSelect.value = remembered;
         }
@@ -1596,6 +1699,9 @@ const ExpenseForm = (() => {
       UI.renderAll();
       showToast(id ? '消費已更新' : '記帳成功！', 'success');
       Sync.push('add_expense', { expense: saved });
+      if (currency !== Store.settings().baseCurrency) {
+        ExchangeRate.syncAll();
+      }
       return true;
     }
     return false;
@@ -1844,7 +1950,9 @@ function exportCSV() {
   const header = ['日期', '名稱', '分類', '付款人', '付款方式', '幣別', '金額', `換算${s.baseCurrency}`, '分攤成員', '備註'];
   const rows   = exs.map(e => {
     const rate = e.currency === s.baseCurrency ? 1 : (ExchangeRate.getCached(e.currency, s.baseCurrency) || 1);
-    const base = Math.round((parseFloat(e.amount) || 0) * rate * 100) / 100;
+    const base = isZeroDecimal(s.baseCurrency)
+      ? Math.round((parseFloat(e.amount) || 0) * rate)
+      : Math.round((parseFloat(e.amount) || 0) * rate * 100) / 100;
     return [
       e.date, e.title, e.category, e.paidBy, e.paymentMethod,
       e.currency, e.amount, base,
@@ -2055,14 +2163,7 @@ const Passcode = (() => {
       showToast(`歡迎！以「${role === 'owner' ? '管理者' : '成員'}」身份登入`, 'success');
       if (Store.getGasUrl()) Sync.pull();
       // Prefetch live exchange rates in background
-      (async () => {
-        const s = Store.settings();
-        const currencies = [...new Set(Store.expenses().map(e => e.currency).filter(c => c && c !== s.baseCurrency))];
-        for (const c of currencies) {
-          await ExchangeRate.getRate(c, s.baseCurrency);
-        }
-        if (currencies.length > 0) UI.renderAll(); // re-render with fresh rates
-      })();
+      ExchangeRate.syncAll();
       buffer = '';
     } else {
       // Shake and show error
@@ -2329,7 +2430,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const transfers = JSON.parse(plan.dataset.transfers || '[]');
       if (transfers.length === 0) return;
       const text = transfers
-        .map(t => `${t.from} → ${t.to}：${t.sym}${t.amount}`)
+        .map(t => `${t.from} → ${t.to}：${t.sym}${t.amountFormatted || t.amount}`)
         .join('\n');
       navigator.clipboard.writeText(text).then(() => showToast('結算結果已複製！', 'success'));
     } catch { showToast('複製失敗', 'error'); }

@@ -17,6 +17,15 @@
 
 const STORAGE_KEY      = 'travelpay_v3';
 const GLOBAL_GAS_KEY   = 'travelpay_gas_url';
+
+/**
+ * ⚡ 全域預設 Google Sheet API 網址：
+ * 若您有自己部署的 Google Apps Script 網址，可直接貼在此處引號內！
+ * 填入後即成為全站預設網址，完全不需要每次去設定複製貼上，
+ * 任何人打開網頁（或透過邀請連結）都會直接連線此試算表。
+ */
+const DEFAULT_GAS_URL  = 'https://script.google.com/macros/s/AKfycbwcci2LPJc-21SLSKiO1ecSGC8iGEFe2CLfZGLmQL6eRy0y4yong4PgX2bqn-RKbKkQ/exec';
+
 const DEFAULT_OWNER_PWD = '1234';
 const DEFAULT_MEMBER_PWD = '0000';
 
@@ -95,7 +104,7 @@ const Store = (() => {
   };
 
   // ── GAS URL (global, shared across all trips) ──
-  let gasUrl = localStorage.getItem(GLOBAL_GAS_KEY) || '';
+  let gasUrl = localStorage.getItem(GLOBAL_GAS_KEY) || DEFAULT_GAS_URL || '';
 
   // ── Init ──
   function init() {
@@ -321,7 +330,7 @@ const Store = (() => {
   function expenses()      { return currentTrip().expenses; }
   function allTrips()      { return Object.values(state.trips); }
   function getRole()       { return auth.role; }
-  function getGasUrl()     { return gasUrl; }
+  function getGasUrl()     { return gasUrl || DEFAULT_GAS_URL || ''; }
 
   // ── Trip CRUD ──
   function selectTrip(id) {
@@ -387,8 +396,8 @@ const Store = (() => {
   }
 
   function saveGasUrl(url) {
-    gasUrl = url;
-    localStorage.setItem(GLOBAL_GAS_KEY, url);
+    gasUrl = url || DEFAULT_GAS_URL || '';
+    localStorage.setItem(GLOBAL_GAS_KEY, gasUrl);
   }
 
   // ── Quick Link CRUD ──
@@ -1910,9 +1919,14 @@ const SettingsForm = (() => {
 
   document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('btn-copy-invite')?.addEventListener('click', () => {
-      const url = document.getElementById('s-gas-url').value.trim();
+      const url = document.getElementById('s-gas-url')?.value.trim() || Store.getGasUrl();
       if (!url) {
-        showToast('請先輸入並儲存雲端網址！', 'warning');
+        Dialog.alert(
+          '尚未設定雲端資料庫',
+          '「邀請連結」需要帶入您的 Google 試算表 API 網址，親友點開後才能自動載入並同步此行程！\n\n請先在上方「Google Sheet API 網址」填入您部署的 Apps Script 網址並儲存。',
+          'fa-cloud',
+          'var(--orange-400)'
+        );
         return;
       }
       let param = url;
@@ -1923,7 +1937,7 @@ const SettingsForm = (() => {
       navigator.clipboard.writeText(inviteLink).then(() => {
         showToast('已複製邀請連結！傳給親友即可自動匯入', 'success');
       }).catch(() => {
-        prompt('複製失敗，請手動複製以下網址：', '', [{value: inviteLink}]);
+        Dialog.prompt('邀請連結', '請複製以下專屬邀請連結傳給親友：', [{ value: inviteLink }]);
       });
     });
   });

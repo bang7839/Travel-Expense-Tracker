@@ -104,10 +104,14 @@ const Store = (() => {
   };
 
   // ── GAS URL (global, shared across all trips) ──
-  let gasUrl = localStorage.getItem(GLOBAL_GAS_KEY) || DEFAULT_GAS_URL || '';
+  let gasUrl = (localStorage.getItem(GLOBAL_GAS_KEY) || '').trim() || DEFAULT_GAS_URL || '';
 
   // ── Init ──
   function init() {
+    if (DEFAULT_GAS_URL && (!gasUrl || !localStorage.getItem(GLOBAL_GAS_KEY))) {
+      gasUrl = DEFAULT_GAS_URL;
+      localStorage.setItem(GLOBAL_GAS_KEY, DEFAULT_GAS_URL);
+    }
     const saved = load();
     if (saved && saved.trips && Object.keys(saved.trips).length > 0) {
       state.trips = saved.trips;
@@ -237,6 +241,37 @@ const Store = (() => {
       changed = true;
     }
 
+    // 5. Emergency Auto-Recovery: 若任何現有行程因同步異常變為 0 筆，自動從舊版/備份庫找回紀錄！
+    try {
+      if (oldTripsRaw) {
+        const oldTrips = JSON.parse(oldTripsRaw);
+        if (oldTrips && typeof oldTrips === 'object') {
+          Object.entries(oldTrips).forEach(([id, oldTrip]) => {
+            if (oldTrip && Array.isArray(oldTrip.expenses) && oldTrip.expenses.length > 0) {
+              const target = state.trips[id] || Object.values(state.trips).find(t => t.settings?.tripName === oldTrip.settings?.tripName);
+              if (target && target.expenses.length === 0) {
+                target.expenses = [...oldTrip.expenses];
+                changed = true;
+              }
+            }
+          });
+        }
+      }
+    } catch (e) {}
+
+    try {
+      if (oldExpensesRaw) {
+        const parsedExp = JSON.parse(oldExpensesRaw);
+        if (Array.isArray(parsedExp) && parsedExp.length > 0) {
+          const cur = state.trips[state.currentTripId];
+          if (cur && cur.expenses.length === 0) {
+            cur.expenses = [...parsedExp];
+            changed = true;
+          }
+        }
+      }
+    } catch (e) {}
+
     if (changed) {
       save();
     }
@@ -357,7 +392,22 @@ const Store = (() => {
     state.trips[id] = trip;
     state.currentTripId = id;
     save();
+
+    // 自動將新行程設定同步至 Google 試算表
+    if (typeof Sync !== 'undefined' && Sync.pushToTrip) {
+      Sync.pushToTrip(id, 'save_settings', { settings: trip.settings, links: trip.links || [] });
+    }
+
     return trip;
+  }
+
+  function deleteTripById(id) {
+    if (!state.trips[id]) return;
+    delete state.trips[id];
+    if (state.currentTripId === id) {
+      state.currentTripId = Object.keys(state.trips)[0] || null;
+    }
+    save();
   }
 
   function importTrip(id, remoteSettings) {
@@ -458,16 +508,74 @@ const Store = (() => {
   function isOwner()  { return auth.role === 'owner'; }
   function isDeleted(id) { return !!(state.deletedTrips && state.deletedTrips[id]); }
 
+  // ── Emergency History Recovery ──
+  function recoverFromHistory() {
+    let recoveredCount = 0;
+    // 1. Check travelpay_trips_store
+    try {
+      const oldRaw = localStorage.getItem('travelpay_trips_store');
+      if (oldRaw) {
+        const oldTrips = JSON.parse(oldRaw);
+        if (oldTrips && typeof oldTrips === 'object') {
+          Object.entries(oldTrips).forEach(([id, oldTrip]) => {
+            if (oldTrip && Array.isArray(oldTrip.expenses) && oldTrip.expenses.length > 0) {
+              let target = state.trips[id] || Object.values(state.trips).find(t => t.settings?.tripName === oldTrip.settings?.tripName);
+              if (!target) {
+                target = createTrip(id, oldTrip.settings?.tripName || '歷史行程');
+                target.settings = { ...target.settings, ...oldTrip.settings };
+                state.trips[id] = target;
+              }
+              const existingIds = new Set((target.expenses || []).map(e => e.id));
+              oldTrip.expenses.forEach(e => {
+                if (!existingIds.has(e.id)) {
+                  target.expenses.push(e);
+                  existingIds.add(e.id);
+                  recoveredCount++;
+                }
+              });
+            }
+          });
+        }
+      }
+    } catch (e) {}
+
+    // 2. Check travelpay_expenses
+    try {
+      const legacyRaw = localStorage.getItem('travelpay_expenses');
+      if (legacyRaw) {
+        const legacyExp = JSON.parse(legacyRaw);
+        if (Array.isArray(legacyExp) && legacyExp.length > 0) {
+          const cur = state.trips[state.currentTripId] || Object.values(state.trips)[0];
+          if (cur) {
+            const existingIds = new Set((cur.expenses || []).map(e => e.id));
+            legacyExp.forEach(e => {
+              if (!existingIds.has(e.id)) {
+                cur.expenses.push(e);
+                existingIds.add(e.id);
+                recoveredCount++;
+              }
+            });
+          }
+        }
+      }
+    } catch (e) {}
+
+    if (recoveredCount > 0) {
+      save();
+    }
+    return recoveredCount;
+  }
+
   // Public API
   return {
     init, save,
     currentTrip, settings, expenses, allTrips,
     getRole, getGasUrl, saveGasUrl,
-    selectTrip, addTrip, importTrip, deleteCurrentTrip, saveSettings,
+    selectTrip, addTrip, importTrip, deleteCurrentTrip, deleteTripById, saveSettings,
     addExpense, updateExpense, deleteExpense,
     addLink, deleteLink,
     unlock, lockout, canWrite, isOwner, isDeleted,
-    importJsonData,
+    importJsonData, recoverFromHistory,
     // expose raw state id for rendering
     get currentTripId() { return state.currentTripId; },
   };
@@ -631,17 +739,20 @@ const ExchangeRate = (() => {
    ═══════════════════════════════════════════════════════════ */
 
 const Sync = (() => {
-  async function pull() {
+  async function pull(overrideTripId = null) {
     const url = Store.getGasUrl();
     if (!url) return;
 
+    const targetId = overrideTripId || Store.currentTripId;
+    if (!targetId) return;
+
     setSyncStatus('syncing', '同步中…');
     try {
-      const res  = await fetch(`${url}?tripId=${encodeURIComponent(Store.currentTripId)}`);
+      const res  = await fetch(`${url}?tripId=${encodeURIComponent(targetId)}`);
       const data = await res.json();
       if (data.success) {
-        // Merge remote trips metadata (no overwrite of local expenses unless remote has more)
-        if (data.allTrips) {
+        // 1. Merge remote trips metadata
+        if (data.allTrips && typeof data.allTrips === 'object') {
           let changed = false;
           Object.entries(data.allTrips).forEach(([id, remote]) => {
             const cleanId = id.replace(/^SETTINGS_CONFIG_/, '');
@@ -650,36 +761,47 @@ const Sync = (() => {
             const localTrip = Store.allTrips().find(t => t.id === cleanId);
             if (!localTrip) {
               const imported = Store.importTrip(cleanId, remote.settings);
-              if (imported) changed = true;
+              if (imported) {
+                if (remote.links) imported.links = remote.links;
+                changed = true;
+              }
             } else if (remote.settings) {
-              // Sync settings for existing trips
               localTrip.settings = { ...localTrip.settings, ...remote.settings };
               changed = true;
             }
-            // Always sync links if remote has them
             if (remote.links && Array.isArray(remote.links)) {
-              const targetTrip = Store.allTrips().find(t => t.id === (id.replace(/^SETTINGS_CONFIG_/, '')));
+              const targetTrip = Store.allTrips().find(t => t.id === cleanId);
               if (targetTrip) {
                 targetTrip.links = remote.links;
                 changed = true;
               }
             }
           });
-          if (changed) Store.save(); // single batch save
+          if (changed) Store.save();
         }
+
+        // 2. Safe merge expenses for target trip
         if (data.expenses && Array.isArray(data.expenses)) {
-          // Deduplicate by ID, keeping the latest (last) entry for each ID
-          const uniqueExpenses = [];
-          const seen = new Set();
-          for (let i = data.expenses.length - 1; i >= 0; i--) {
-            const exp = data.expenses[i];
-            if (!seen.has(exp.id)) {
-              seen.add(exp.id);
-              uniqueExpenses.unshift(exp);
+          const tripObj = Store.allTrips().find(t => t.id === targetId) || Store.currentTrip();
+          if (tripObj) {
+            const localExpenses = tripObj.expenses || [];
+
+            if (data.expenses.length === 0 && localExpenses.length > 0) {
+              // 雲端目前是空的，但本地有寶貴紀錄：絕不覆蓋清空！
+              // 自動將本地紀錄與設定推送至雲端試算表備份
+              localExpenses.forEach(exp => {
+                pushToTrip(targetId, 'add_expense', { expense: exp });
+              });
+              pushToTrip(targetId, 'save_settings', { settings: tripObj.settings, links: tripObj.links || [] });
+            } else {
+              // 雙向安全合併（以 id 為基準聯集），本地與雲端記錄均完整保留，絕不漏失！
+              const mergedMap = new Map();
+              localExpenses.forEach(e => { if (e && e.id) mergedMap.set(e.id, e); });
+              data.expenses.forEach(e => { if (e && e.id) mergedMap.set(e.id, e); });
+              tripObj.expenses = Array.from(mergedMap.values());
+              Store.save();
             }
           }
-          Store.currentTrip().expenses = uniqueExpenses;
-          Store.save();
         }
         setSyncStatus('online', '雲端已同步');
         UI.renderAll();
@@ -689,7 +811,7 @@ const Sync = (() => {
     }
   }
 
-  async function push(action, payload) {
+  async function pushToTrip(tripId, action, payload) {
     const url = Store.getGasUrl();
     if (!url) return;
     try {
@@ -698,11 +820,64 @@ const Sync = (() => {
         method: 'POST',
         mode:   'no-cors',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, tripId: Store.currentTripId, ...payload }),
+        body: JSON.stringify({ action, tripId: tripId || Store.currentTripId, ...payload }),
       });
       setSyncStatus('online', '雲端已更新');
     } catch {
       setSyncStatus('offline', '僅存於本地');
+    }
+  }
+
+  function push(action, payload) {
+    return pushToTrip(Store.currentTripId, action, payload);
+  }
+
+  async function uploadAllTrips() {
+    const url = Store.getGasUrl();
+    if (!url) {
+      showToast('尚未設定 Google Sheet API 網址！', 'warning');
+      return false;
+    }
+    setSyncStatus('syncing', '正在將全部行程推送到雲端…');
+    const trips = Store.allTrips();
+    let totalCount = 0;
+    try {
+      for (const trip of trips) {
+        // 1. 推送行程設定
+        await fetch(url, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'save_settings',
+            tripId: trip.id,
+            settings: trip.settings,
+            links: trip.links || []
+          }),
+        });
+        // 2. 推送消費紀錄
+        const exs = trip.expenses || [];
+        for (const exp of exs) {
+          await fetch(url, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'add_expense',
+              tripId: trip.id,
+              expense: exp
+            }),
+          });
+          totalCount++;
+        }
+      }
+      setSyncStatus('online', '雲端已同步');
+      showToast(`🎉 成功將 ${trips.length} 個行程、共 ${totalCount} 筆消費全部推送到雲端試算表！`, 'success');
+      return true;
+    } catch (err) {
+      setSyncStatus('offline', '上傳失敗');
+      showToast('上傳至雲端失敗：' + err.message, 'error');
+      return false;
     }
   }
 
@@ -714,7 +889,7 @@ const Sync = (() => {
     if (lbl) lbl.textContent = label;
   }
 
-  return { pull, push, setSyncStatus };
+  return { pull, push, pushToTrip, uploadAllTrips, setSyncStatus };
 })();
 
 /* ═══════════════════════════════════════════════════════════
@@ -785,7 +960,8 @@ const UI = (() => {
     const sel = document.getElementById('select-trip');
     if (!sel) return;
     sel.innerHTML = '';
-    Store.allTrips().forEach(trip => {
+    const trips = Store.allTrips();
+    trips.forEach(trip => {
       const opt = document.createElement('option');
       opt.value = trip.id;
       const hasLock = trip.settings.ownerPassword || trip.settings.memberPassword;
@@ -793,6 +969,12 @@ const UI = (() => {
       if (trip.id === Store.currentTripId) opt.selected = true;
       sel.appendChild(opt);
     });
+    // 若本機有多個行程，解除鎖定，確保隨時可自由切換行程
+    if (trips.length > 1) {
+      sel.disabled = false;
+      const ownerBtn = document.querySelector('.split-toggle-btn[data-role="owner"]');
+      if (ownerBtn) ownerBtn.style.display = '';
+    }
   }
 
   function renderPasscodeDots(len) {
@@ -1918,7 +2100,7 @@ const SettingsForm = (() => {
   });
 
   document.addEventListener('DOMContentLoaded', () => {
-    document.getElementById('btn-copy-invite')?.addEventListener('click', () => {
+    document.getElementById('btn-copy-invite')?.addEventListener('click', async () => {
       const url = document.getElementById('s-gas-url')?.value.trim() || Store.getGasUrl();
       if (!url) {
         Dialog.alert(
@@ -1932,12 +2114,23 @@ const SettingsForm = (() => {
       let param = url;
       const match = url.match(/\/s\/([^/]+)\/exec/);
       if (match) param = match[1];
+
+      // 關鍵保證：立即將當前行程設定與現有消費同步至 Google 試算表，確保朋友點開時能立即取得！
+      const cur = Store.currentTrip();
+      if (cur) {
+        showToast('正在同步此行程資料至雲端…', 'info');
+        await Sync.pushToTrip(cur.id, 'save_settings', { settings: cur.settings, links: cur.links || [] });
+        const exs = cur.expenses || [];
+        for (const e of exs) {
+          await Sync.pushToTrip(cur.id, 'add_expense', { expense: e });
+        }
+      }
       
       const inviteLink = `${window.location.origin}${window.location.pathname}?gas=${param}&trip=${Store.currentTripId}`;
       navigator.clipboard.writeText(inviteLink).then(() => {
-        showToast('已複製邀請連結！傳給親友即可自動匯入', 'success');
+        showToast('✅ 已複製邀請連結！行程資料已同步至雲端，傳給親友即可查看！', 'success');
       }).catch(() => {
-        Dialog.prompt('邀請連結', '請複製以下專屬邀請連結傳給親友：', [{ value: inviteLink }]);
+        Dialog.prompt('邀請連結', '行程已同步至雲端！請複製以下專屬邀請連結傳給親友：', [{ value: inviteLink }]);
       });
     });
   });
@@ -2209,9 +2402,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const importGas = params.get('gas');
   const importTrip = params.get('trip');
   
-  if (importGas) {
-    const fullUrl = importGas.startsWith('http') ? importGas : `https://script.google.com/macros/s/${importGas}/exec`;
-    Store.saveGasUrl(fullUrl);
+  if (importGas || importTrip) {
+    if (importGas) {
+      const fullUrl = importGas.startsWith('http') ? importGas : `https://script.google.com/macros/s/${importGas}/exec`;
+      Store.saveGasUrl(fullUrl);
+    }
     window.history.replaceState({}, document.title, window.location.pathname);
     
     // Lock screen UI to member by default for invite links
@@ -2219,18 +2414,27 @@ document.addEventListener('DOMContentLoaded', () => {
       Passcode.setLoginRole('member');
       const ownerBtn = document.querySelector('.split-toggle-btn[data-role="owner"]');
       if (ownerBtn) ownerBtn.style.display = 'none';
-      const tripSelector = document.getElementById('select-trip');
-      if (tripSelector) tripSelector.disabled = true;
+
+      // 核心修復：直接向雲端拉取該專屬行程與所有消費
+      Sync.pull(importTrip).then(() => {
+        if (Store.allTrips().some(t => t.id === importTrip)) {
+          Store.selectTrip(importTrip);
+          // 清理空 demo 行程，確保只有目標行程
+          if (Store.allTrips().length > 1 && Store.allTrips().find(t => t.id === 'trip_demo')?.expenses.length === 0) {
+            Store.deleteTripById('trip_demo');
+          }
+        }
+        UI.renderTripDropdown();
+        UI.renderAll();
+        showToast('已透過邀請連結成功載入行程！', 'success');
+        UI.checkTripNeedsPassword();
+      });
+    } else {
+      Sync.pull().then(() => {
+        UI.renderTripDropdown();
+        UI.checkTripNeedsPassword();
+      });
     }
-    
-    Sync.pull().then(() => {
-      if (importTrip) {
-        Store.selectTrip(importTrip);
-      }
-      UI.renderTripDropdown();
-      showToast('已透過連結自動載入專屬行程', 'success');
-      UI.checkTripNeedsPassword();
-    });
   } else {
     // 2. Show lock screen or auto-unlock if no import URL
     UI.checkTripNeedsPassword();
@@ -2238,6 +2442,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // 3. Lock screen events
   document.getElementById('btn-sync-cloud-lock')?.addEventListener('click', async () => {
+    const currentUrl = Store.getGasUrl();
+    if (currentUrl) {
+      showToast('正在從雲端同步行程…', 'info');
+      await Sync.pull();
+      UI.renderTripDropdown();
+      showToast('✅ 行程已從雲端更新完成！', 'success');
+      return;
+    }
     const res = await Dialog.prompt('從雲端匯入', '請輸入您的 Google Apps Script 網址：', [{ placeholder: 'https://script.google.com/macros/s/.../exec' }]);
     if (res.ok && res.values[0]) {
       Store.saveGasUrl(res.values[0].trim());
@@ -2404,6 +2616,34 @@ document.addEventListener('DOMContentLoaded', () => {
   // ── Sync now ──
   document.getElementById('btn-sync-now').addEventListener('click', () => {
     Sync.pull().then(() => showToast('同步完成', 'success'));
+  });
+
+  // ── Upload all trips to cloud ──
+  document.getElementById('btn-upload-all-cloud')?.addEventListener('click', async () => {
+    const res = await Dialog.confirm(
+      '推送所有行程至雲端',
+      '確定要將手機內所有行程與消費全部上傳至 Google 試算表嗎？\n這能確保所有受邀親友都能完整查看到行程資料。',
+      false
+    );
+    if (!res.ok) return;
+    await Sync.uploadAllTrips();
+  });
+
+  // ── Recover data from history ──
+  document.getElementById('btn-recover-data')?.addEventListener('click', () => {
+    const count = Store.recoverFromHistory();
+    UI.renderTripDropdown();
+    UI.renderAll();
+    if (count > 0) {
+      showToast(`🎉 成功從歷史備份中找回 ${count} 筆消費紀錄！`, 'success');
+      const cur = Store.currentTrip();
+      if (cur) {
+        Sync.pushToTrip(cur.id, 'save_settings', { settings: cur.settings, links: cur.links || [] });
+        (cur.expenses || []).forEach(exp => Sync.pushToTrip(cur.id, 'add_expense', { expense: exp }));
+      }
+    } else {
+      showToast('目前紀錄均已是最新狀態。', 'info');
+    }
   });
 
   // ── Export CSV & JSON ──

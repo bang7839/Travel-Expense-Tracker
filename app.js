@@ -19,11 +19,18 @@ const STORAGE_KEY      = 'travelpay_v3';
 const GLOBAL_GAS_KEY   = 'travelpay_gas_url';
 
 /**
- * ⚡ 全域預設 Google Sheet API 網址：
- * 若您有自己部署的 Google Apps Script 網址，可直接貼在此處引號內！
- * 填入後即成為全站預設網址，完全不需要每次去設定複製貼上，
- * 任何人打開網頁（或透過邀請連結）都會直接連線此試算表。
+ * ⚡ Firebase Realtime Database 設定（即時秒級同步雲端資料庫）
  */
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyDExLwohR7Y-0qH75UxSIaHnpX6580PmLc",
+  authDomain: "travelpay-150e2.firebaseapp.com",
+  databaseURL: "https://travelpay-150e2-default-rtdb.firebaseio.com",
+  projectId: "travelpay-150e2",
+  storageBucket: "travelpay-150e2.firebasestorage.app",
+  messagingSenderId: "34054733319",
+  appId: "1:34054733319:web:e58ea886ca3bbd5183b4a2"
+};
+
 const DEFAULT_GAS_URL  = 'https://script.google.com/macros/s/AKfycbwcci2LPJc-21SLSKiO1ecSGC8iGEFe2CLfZGLmQL6eRy0y4yong4PgX2bqn-RKbKkQ/exec';
 
 const DEFAULT_OWNER_PWD = '1234';
@@ -735,96 +742,220 @@ const ExchangeRate = (() => {
 })();
 
 /* ═══════════════════════════════════════════════════════════
-   GAS SYNC — Google Apps Script Cloud Sync
+   FIREBASE REALTIME DATABASE SYNC (秒級即時同步引擎)
    ═══════════════════════════════════════════════════════════ */
 
 const Sync = (() => {
-  async function pull(overrideTripId = null) {
-    const url = Store.getGasUrl();
-    if (!url) return;
+  let _db = null;
+  let _activeTripId = null;
+  let _currentListener = null;
 
-    const targetId = overrideTripId || Store.currentTripId;
-    if (!targetId) return;
-
-    setSyncStatus('syncing', '同步中…');
+  function init() {
     try {
-      const res  = await fetch(`${url}?tripId=${encodeURIComponent(targetId)}`);
-      const data = await res.json();
-      if (data.success) {
-        // 1. Merge remote trips metadata
-        if (data.allTrips && typeof data.allTrips === 'object') {
-          let changed = false;
-          Object.entries(data.allTrips).forEach(([id, remote]) => {
-            const cleanId = id.replace(/^SETTINGS_CONFIG_/, '');
-            if (Store.isDeleted(cleanId)) return; // Skip trips deleted locally
-
-            const localTrip = Store.allTrips().find(t => t.id === cleanId);
-            if (!localTrip) {
-              const imported = Store.importTrip(cleanId, remote.settings);
-              if (imported) {
-                if (remote.links) imported.links = remote.links;
-                changed = true;
-              }
-            } else if (remote.settings) {
-              localTrip.settings = { ...localTrip.settings, ...remote.settings };
-              changed = true;
-            }
-            if (remote.links && Array.isArray(remote.links)) {
-              const targetTrip = Store.allTrips().find(t => t.id === cleanId);
-              if (targetTrip) {
-                targetTrip.links = remote.links;
-                changed = true;
-              }
-            }
-          });
-          if (changed) Store.save();
+      if (typeof firebase !== 'undefined') {
+        if (!firebase.apps.length) {
+          firebase.initializeApp(FIREBASE_CONFIG);
         }
+        _db = firebase.database();
 
-        // 2. Safe merge expenses for target trip
-        if (data.expenses && Array.isArray(data.expenses)) {
-          const tripObj = Store.allTrips().find(t => t.id === targetId) || Store.currentTrip();
-          if (tripObj) {
-            const localExpenses = tripObj.expenses || [];
-
-            if (data.expenses.length === 0 && localExpenses.length > 0) {
-              // 雲端目前是空的，但本地有寶貴紀錄：絕不覆蓋清空！
-              // 自動將本地紀錄與設定推送至雲端試算表備份
-              localExpenses.forEach(exp => {
-                pushToTrip(targetId, 'add_expense', { expense: exp });
-              });
-              pushToTrip(targetId, 'save_settings', { settings: tripObj.settings, links: tripObj.links || [] });
-            } else {
-              // 雙向安全合併（以 id 為基準聯集），本地與雲端記錄均完整保留，絕不漏失！
-              const mergedMap = new Map();
-              localExpenses.forEach(e => { if (e && e.id) mergedMap.set(e.id, e); });
-              data.expenses.forEach(e => { if (e && e.id) mergedMap.set(e.id, e); });
-              tripObj.expenses = Array.from(mergedMap.values());
-              Store.save();
-            }
+        // 監聽網路連線狀態
+        _db.ref('.info/connected').on('value', snap => {
+          if (snap.val() === true) {
+            setSyncStatus('online', '⚡ Firebase 即時連線');
+          } else {
+            setSyncStatus('offline', '離線（本地暫存）');
           }
-        }
-        setSyncStatus('online', '雲端已同步');
-        UI.renderAll();
+        });
+
+        // 監聽所有行程清單（讓多手機下拉選單自動同步即時出現新行程）
+        _listenAllTrips();
       }
-    } catch {
-      setSyncStatus('offline', '同步失敗（使用本地）');
+    } catch (e) {
+      console.warn('Firebase 初始化異常:', e);
+      setSyncStatus('offline', '離線模式');
     }
   }
 
-  async function pushToTrip(tripId, action, payload) {
-    const url = Store.getGasUrl();
-    if (!url) return;
-    try {
-      setSyncStatus('syncing', '更新雲端…');
-      await fetch(url, {
-        method: 'POST',
-        mode:   'no-cors',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, tripId: tripId || Store.currentTripId, ...payload }),
+  function _listenAllTrips() {
+    if (!_db) return;
+    _db.ref('trips').on('value', snap => {
+      const all = snap.val();
+      if (!all || typeof all !== 'object') return;
+      let changed = false;
+      Object.entries(all).forEach(([id, t]) => {
+        if (!t || Store.isDeleted(id)) return;
+        const local = Store.allTrips().find(item => item.id === id);
+        if (!local) {
+          const imported = Store.importTrip(id, t.settings || { tripName: '雲端行程' });
+          if (imported) {
+            if (t.links) imported.links = t.links;
+            if (t.expenses) {
+              imported.expenses = Array.isArray(t.expenses) ? t.expenses : Object.values(t.expenses);
+            }
+            changed = true;
+          }
+        } else {
+          // 若雲端有更新的設定則即時同步
+          if (t.settings && JSON.stringify(local.settings) !== JSON.stringify(t.settings)) {
+            local.settings = { ...local.settings, ...t.settings };
+            changed = true;
+          }
+          if (t.links && JSON.stringify(local.links) !== JSON.stringify(t.links)) {
+            local.links = t.links;
+            changed = true;
+          }
+        }
       });
-      setSyncStatus('online', '雲端已更新');
-    } catch {
-      setSyncStatus('offline', '僅存於本地');
+      if (changed) {
+        Store.save();
+        UI.renderTripDropdown();
+      }
+    });
+  }
+
+  function pull(targetTripId = null) {
+    const tid = targetTripId || Store.currentTripId;
+    if (!tid) return Promise.resolve();
+
+    if (!_db) {
+      init();
+    }
+    if (!_db) {
+      setSyncStatus('offline', '離線（本地）');
+      return Promise.resolve();
+    }
+
+    // 切換即時監聽目標行程
+    if (_activeTripId !== tid && _currentListener) {
+      _currentListener.off();
+      _currentListener = null;
+    }
+    _activeTripId = tid;
+
+    const ref = _db.ref(`trips/${tid}`);
+    _currentListener = ref;
+
+    return new Promise(resolve => {
+      // 1. 初次載入與檢查
+      ref.once('value').then(snap => {
+        const remote = snap.val();
+        const tripObj = Store.allTrips().find(t => t.id === tid) || Store.currentTrip();
+
+        if (!remote && tripObj) {
+          // 雲端尚未建立此行程，立即將本地行程推送到雲端
+          pushTrip(tripObj);
+        } else if (remote && tripObj) {
+          if (remote.settings) {
+            tripObj.settings = { ...tripObj.settings, ...remote.settings };
+          }
+          if (remote.links && Array.isArray(remote.links)) {
+            tripObj.links = remote.links;
+          }
+
+          // 雙向合併消費（絕不清空）
+          const remoteExp = remote.expenses
+            ? (Array.isArray(remote.expenses) ? remote.expenses : Object.values(remote.expenses))
+            : [];
+          const localExp = tripObj.expenses || [];
+
+          if (remoteExp.length === 0 && localExp.length > 0) {
+            // 本地有資料而雲端為空，自動推上雲端
+            pushTrip(tripObj);
+          } else {
+            const mergedMap = new Map();
+            localExp.forEach(e => { if (e && e.id) mergedMap.set(e.id, e); });
+            remoteExp.forEach(e => { if (e && e.id) mergedMap.set(e.id, e); });
+            tripObj.expenses = Array.from(mergedMap.values());
+            Store.save();
+          }
+        }
+        UI.renderAll();
+        resolve();
+      }).catch(() => resolve());
+
+      // 2. 毫秒級即時監聽：其他手機記帳時，本地畫面瞬間更新！
+      ref.on('value', snap => {
+        const remote = snap.val();
+        if (!remote) return;
+        const cur = Store.currentTrip();
+        if (!cur || cur.id !== tid) return;
+
+        let changed = false;
+        if (remote.settings && JSON.stringify(cur.settings) !== JSON.stringify(remote.settings)) {
+          cur.settings = { ...cur.settings, ...remote.settings };
+          changed = true;
+        }
+        if (remote.links && JSON.stringify(cur.links) !== JSON.stringify(remote.links)) {
+          cur.links = remote.links;
+          changed = true;
+        }
+
+        const remoteExp = remote.expenses
+          ? (Array.isArray(remote.expenses) ? remote.expenses : Object.values(remote.expenses))
+          : [];
+        const localExp = cur.expenses || [];
+
+        const mergedMap = new Map();
+        localExp.forEach(e => { if (e && e.id) mergedMap.set(e.id, e); });
+        remoteExp.forEach(e => { if (e && e.id) mergedMap.set(e.id, e); });
+        const newArr = Array.from(mergedMap.values());
+
+        if (newArr.length !== localExp.length || JSON.stringify(newArr) !== JSON.stringify(localExp)) {
+          cur.expenses = newArr;
+          changed = true;
+        }
+
+        if (changed) {
+          Store.save();
+          UI.renderAll();
+        }
+      });
+    });
+  }
+
+  function pushTrip(trip) {
+    if (!_db || !trip) return;
+    const expMap = {};
+    (trip.expenses || []).forEach(e => { if (e && e.id) expMap[e.id] = e; });
+    _db.ref(`trips/${trip.id}`).set({
+      id: trip.id,
+      settings: trip.settings,
+      links: trip.links || [],
+      expenses: expMap,
+      updatedAt: Date.now()
+    });
+  }
+
+  function pushToTrip(tripId, action, payload) {
+    if (!_db) {
+      init();
+    }
+    if (!_db) return;
+    const tid = tripId || Store.currentTripId;
+    if (!tid) return;
+
+    if (action === 'add_expense' || action === 'update_expense') {
+      const exp = payload.expense;
+      if (exp && exp.id) {
+        _db.ref(`trips/${tid}/expenses/${exp.id}`).set(exp);
+        _db.ref(`trips/${tid}/updatedAt`).set(Date.now());
+      }
+    } else if (action === 'delete_expense') {
+      if (payload.id) {
+        _db.ref(`trips/${tid}/expenses/${payload.id}`).remove();
+        _db.ref(`trips/${tid}/updatedAt`).set(Date.now());
+      }
+    } else if (action === 'save_settings') {
+      if (payload.settings) {
+        _db.ref(`trips/${tid}/settings`).set(payload.settings);
+      }
+      if (payload.links) {
+        _db.ref(`trips/${tid}/links`).set(payload.links);
+      }
+      _db.ref(`trips/${tid}/updatedAt`).set(Date.now());
+    } else if (action === 'delete_trip') {
+      const delId = payload.deletedTripId || tid;
+      _db.ref(`trips/${delId}`).remove();
     }
   }
 
@@ -833,50 +964,26 @@ const Sync = (() => {
   }
 
   async function uploadAllTrips() {
-    const url = Store.getGasUrl();
-    if (!url) {
-      showToast('尚未設定 Google Sheet API 網址！', 'warning');
+    if (!_db) {
+      init();
+    }
+    if (!_db) {
+      showToast('Firebase 連線未啟動，請檢查網路連線', 'error');
       return false;
     }
-    setSyncStatus('syncing', '正在將全部行程推送到雲端…');
+    setSyncStatus('syncing', '正在將全部行程推送到 Firebase…');
     const trips = Store.allTrips();
     let totalCount = 0;
     try {
       for (const trip of trips) {
-        // 1. 推送行程設定
-        await fetch(url, {
-          method: 'POST',
-          mode: 'no-cors',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'save_settings',
-            tripId: trip.id,
-            settings: trip.settings,
-            links: trip.links || []
-          }),
-        });
-        // 2. 推送消費紀錄
-        const exs = trip.expenses || [];
-        for (const exp of exs) {
-          await fetch(url, {
-            method: 'POST',
-            mode: 'no-cors',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              action: 'add_expense',
-              tripId: trip.id,
-              expense: exp
-            }),
-          });
-          totalCount++;
-        }
+        pushTrip(trip);
+        totalCount += (trip.expenses || []).length;
       }
-      setSyncStatus('online', '雲端已同步');
-      showToast(`🎉 成功將 ${trips.length} 個行程、共 ${totalCount} 筆消費全部推送到雲端試算表！`, 'success');
+      setSyncStatus('online', '⚡ Firebase 即時連線');
+      showToast(`🎉 成功將 ${trips.length} 個行程、共 ${totalCount} 筆消費推送到 Firebase 雲端資料庫！`, 'success');
       return true;
     } catch (err) {
-      setSyncStatus('offline', '上傳失敗');
-      showToast('上傳至雲端失敗：' + err.message, 'error');
+      showToast('上傳失敗：' + err.message, 'error');
       return false;
     }
   }
@@ -889,7 +996,7 @@ const Sync = (() => {
     if (lbl) lbl.textContent = label;
   }
 
-  return { pull, push, pushToTrip, uploadAllTrips, setSyncStatus };
+  return { init, pull, push, pushToTrip, pushTrip, uploadAllTrips, setSyncStatus };
 })();
 
 /* ═══════════════════════════════════════════════════════════
@@ -2034,7 +2141,8 @@ const SettingsForm = (() => {
     document.getElementById('s-members').value        = s.members.join(', ');
     document.getElementById('s-owner-pwd').value      = s.ownerPassword || '';
     document.getElementById('s-member-pwd').value     = s.memberPassword || '';
-    document.getElementById('s-gas-url').value        = Store.getGasUrl();
+    const gasEl = document.getElementById('s-gas-url');
+    if (gasEl) gasEl.value = Store.getGasUrl();
 
     // Load credit cards (support both old string[] and new object[])
     _editingIdx = -1;
@@ -2066,7 +2174,8 @@ const SettingsForm = (() => {
       memberPassword: memberPwd,
     });
 
-    Store.saveGasUrl(document.getElementById('s-gas-url').value.trim());
+    const gasInput = document.getElementById('s-gas-url');
+    if (gasInput) Store.saveGasUrl(gasInput.value.trim());
 
     if (closeModalAfter) {
       closeModal('modal-settings');
@@ -2101,36 +2210,17 @@ const SettingsForm = (() => {
 
   document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('btn-copy-invite')?.addEventListener('click', async () => {
-      const url = document.getElementById('s-gas-url')?.value.trim() || Store.getGasUrl();
-      if (!url) {
-        Dialog.alert(
-          '尚未設定雲端資料庫',
-          '「邀請連結」需要帶入您的 Google 試算表 API 網址，親友點開後才能自動載入並同步此行程！\n\n請先在上方「Google Sheet API 網址」填入您部署的 Apps Script 網址並儲存。',
-          'fa-cloud',
-          'var(--orange-400)'
-        );
-        return;
-      }
-      let param = url;
-      const match = url.match(/\/s\/([^/]+)\/exec/);
-      if (match) param = match[1];
-
-      // 關鍵保證：立即將當前行程設定與現有消費同步至 Google 試算表，確保朋友點開時能立即取得！
+      // 確保將當前行程設定與現有消費同步至 Firebase 雲端資料庫
       const cur = Store.currentTrip();
       if (cur) {
-        showToast('正在同步此行程資料至雲端…', 'info');
-        await Sync.pushToTrip(cur.id, 'save_settings', { settings: cur.settings, links: cur.links || [] });
-        const exs = cur.expenses || [];
-        for (const e of exs) {
-          await Sync.pushToTrip(cur.id, 'add_expense', { expense: e });
-        }
+        Sync.pushTrip(cur);
       }
       
-      const inviteLink = `${window.location.origin}${window.location.pathname}?gas=${param}&trip=${Store.currentTripId}`;
+      const inviteLink = `${window.location.origin}${window.location.pathname}?trip=${Store.currentTripId}`;
       navigator.clipboard.writeText(inviteLink).then(() => {
-        showToast('✅ 已複製邀請連結！行程資料已同步至雲端，傳給親友即可查看！', 'success');
+        showToast('✅ 已複製專屬邀請連結！傳給親友點開即自動連線即時同步！', 'success');
       }).catch(() => {
-        Dialog.prompt('邀請連結', '行程已同步至雲端！請複製以下專屬邀請連結傳給親友：', [{ value: inviteLink }]);
+        Dialog.prompt('邀請連結', '請複製以下專屬邀請連結傳給親友：', [{ value: inviteLink }]);
       });
     });
   });
@@ -2394,69 +2484,48 @@ const Passcode = (() => {
    ═══════════════════════════════════════════════════════════ */
 
 document.addEventListener('DOMContentLoaded', () => {
-  // 1. Bootstrap store
+  // 1. Bootstrap store & Firebase
   Store.init();
+  Sync.init();
 
   // 1.5 Auto-import from URL (for easy sharing)
   const params = new URLSearchParams(window.location.search);
-  const importGas = params.get('gas');
   const importTrip = params.get('trip');
   
-  if (importGas || importTrip) {
-    if (importGas) {
-      const fullUrl = importGas.startsWith('http') ? importGas : `https://script.google.com/macros/s/${importGas}/exec`;
-      Store.saveGasUrl(fullUrl);
-    }
+  if (importTrip) {
     window.history.replaceState({}, document.title, window.location.pathname);
     
     // Lock screen UI to member by default for invite links
-    if (importTrip) {
-      Passcode.setLoginRole('member');
-      const ownerBtn = document.querySelector('.split-toggle-btn[data-role="owner"]');
-      if (ownerBtn) ownerBtn.style.display = 'none';
+    Passcode.setLoginRole('member');
+    const ownerBtn = document.querySelector('.split-toggle-btn[data-role="owner"]');
+    if (ownerBtn) ownerBtn.style.display = 'none';
 
-      // 核心修復：直接向雲端拉取該專屬行程與所有消費
-      Sync.pull(importTrip).then(() => {
-        if (Store.allTrips().some(t => t.id === importTrip)) {
-          Store.selectTrip(importTrip);
-          // 清理空 demo 行程，確保只有目標行程
-          if (Store.allTrips().length > 1 && Store.allTrips().find(t => t.id === 'trip_demo')?.expenses.length === 0) {
-            Store.deleteTripById('trip_demo');
-          }
+    // 核心：直接向 Firebase 拉取該專屬行程與所有即時消費
+    Sync.pull(importTrip).then(() => {
+      if (Store.allTrips().some(t => t.id === importTrip)) {
+        Store.selectTrip(importTrip);
+        // 清理空 demo 行程，確保只有目標行程
+        if (Store.allTrips().length > 1 && Store.allTrips().find(t => t.id === 'trip_demo')?.expenses.length === 0) {
+          Store.deleteTripById('trip_demo');
         }
-        UI.renderTripDropdown();
-        UI.renderAll();
-        showToast('已透過邀請連結成功載入行程！', 'success');
-        UI.checkTripNeedsPassword();
-      });
-    } else {
-      Sync.pull().then(() => {
-        UI.renderTripDropdown();
-        UI.checkTripNeedsPassword();
-      });
-    }
+      }
+      UI.renderTripDropdown();
+      UI.renderAll();
+      showToast('已連線專屬旅遊行程！', 'success');
+      UI.checkTripNeedsPassword();
+    });
   } else {
     // 2. Show lock screen or auto-unlock if no import URL
     UI.checkTripNeedsPassword();
+    Sync.pull();
   }
 
   // 3. Lock screen events
   document.getElementById('btn-sync-cloud-lock')?.addEventListener('click', async () => {
-    const currentUrl = Store.getGasUrl();
-    if (currentUrl) {
-      showToast('正在從雲端同步行程…', 'info');
-      await Sync.pull();
-      UI.renderTripDropdown();
-      showToast('✅ 行程已從雲端更新完成！', 'success');
-      return;
-    }
-    const res = await Dialog.prompt('從雲端匯入', '請輸入您的 Google Apps Script 網址：', [{ placeholder: 'https://script.google.com/macros/s/.../exec' }]);
-    if (res.ok && res.values[0]) {
-      Store.saveGasUrl(res.values[0].trim());
-      await Sync.pull();
-      UI.renderTripDropdown();
-      showToast('行程已從雲端更新', 'success');
-    }
+    showToast('正在與 Firebase 即時同步…', 'info');
+    await Sync.pull();
+    UI.renderTripDropdown();
+    showToast('⚡ 已完成即時同步', 'success');
   });
 
   // ── Passcode keypad ──
@@ -2622,7 +2691,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-upload-all-cloud')?.addEventListener('click', async () => {
     const res = await Dialog.confirm(
       '推送所有行程至雲端',
-      '確定要將手機內所有行程與消費全部上傳至 Google 試算表嗎？\n這能確保所有受邀親友都能完整查看到行程資料。',
+      '確定要將手機內所有行程與消費全部同步推送到 Firebase 雲端資料庫嗎？\n這能確保所有受邀親友都能即時查看到行程資料。',
       false
     );
     if (!res.ok) return;
@@ -2638,8 +2707,7 @@ document.addEventListener('DOMContentLoaded', () => {
       showToast(`🎉 成功從歷史備份中找回 ${count} 筆消費紀錄！`, 'success');
       const cur = Store.currentTrip();
       if (cur) {
-        Sync.pushToTrip(cur.id, 'save_settings', { settings: cur.settings, links: cur.links || [] });
-        (cur.expenses || []).forEach(exp => Sync.pushToTrip(cur.id, 'add_expense', { expense: exp }));
+        Sync.pushTrip(cur);
       }
     } else {
       showToast('目前紀錄均已是最新狀態。', 'info');

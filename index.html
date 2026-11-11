@@ -454,25 +454,25 @@
         <!-- Google Sheet URL -->
         <div class="divider"></div>
         <div class="form-group mb-4">
-          <label class="form-label" for="s-gas-url">
-            <i class="fa-solid fa-table" style="color:var(--success);"></i> Google Sheet API 網址（全域）
+          <label class="form-label">
+            <i class="fa-solid fa-bolt" style="color:var(--gold-400);"></i> 雲端即時連線引擎 (Firebase RTDB)
           </label>
-          <input type="url" class="form-input" id="s-gas-url" placeholder="https://script.google.com/macros/s/.../exec">
-          <div class="flex gap-2" style="margin-top: 8px;">
-            <button type="button" class="btn btn-secondary w-full" id="btn-copy-invite" style="padding: 10px; font-size: 13px;">
-              <i class="fa-solid fa-link"></i> 複製邀請連結 (自動匯入雲端)
-            </button>
+          <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;padding:8px 12px;background:var(--glass-bg);border:1px solid var(--glass-border);border-radius:8px;">
+            ⚡ 狀態：已連線至專屬 Firebase 即時資料庫（支援多人毫秒級即時同步與離線自動暫存）
           </div>
-          <span class="form-hint" style="margin-top: 8px; display: block;">💡 <b>邀請連結運作原理</b>：將您的雲端試算表設定打包進專屬網址，傳給親友點開即可自動連線同步，無須手動設定。</span>
+          <button type="button" class="btn btn-secondary w-full" id="btn-copy-invite" style="padding: 10px; font-size: 13px; font-weight: 600; border-color: var(--teal-400); color: var(--teal-400);">
+            <i class="fa-solid fa-link"></i> 複製專屬邀請連結 (傳給親友自動即時同步)
+          </button>
+          <span class="form-hint" style="margin-top: 8px; display: block;">💡 <b>邀請連結</b>：親友點開後會自動連上此雲端資料庫並載入行程，任何人在手機上記帳，其他人的畫面都會即時同步！</span>
         </div>
 
         <!-- Data Backup & Migration -->
         <div class="settings-section-title">📦 資料備份與移轉</div>
         <button type="button" class="btn btn-secondary w-full mb-2" id="btn-upload-all-cloud" style="border-color:var(--teal-400);color:var(--teal-400);padding:10px;font-size:13px;font-weight:600;">
-          <i class="fa-solid fa-cloud-arrow-up"></i> ☁️ 將所有行程與消費完整上傳至 Google 試算表
+          <i class="fa-solid fa-cloud-arrow-up"></i> ☁️ 將所有行程與消費全部同步至 Firebase 雲端
         </button>
         <button type="button" class="btn btn-secondary w-full mb-3" id="btn-recover-data" style="border-color:var(--gold-400);color:var(--gold-400);padding:10px;font-size:13px;font-weight:600;">
-          <i class="fa-solid fa-clock-rotate-left"></i> 🔄 從歷史備份庫立即找回消費紀錄
+          <i class="fa-solid fa-clock-rotate-left"></i> 🔄 從歷史備份庫找回消費紀錄
         </button>
         <div class="flex gap-2 mb-2">
           <button type="button" class="btn btn-secondary flex-1" id="btn-export-csv" style="padding:10px 4px;font-size:12px;">
@@ -605,7 +605,11 @@
     };
   </script>
 
-  <!-- Script -->
-  <script src="app.js?v=20261110_4"></script>
+  <!-- Firebase Realtime Database SDK (compat build) -->
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-database-compat.js"></script>
+
+  <!-- Main App Script -->
+  <script src="app.js?v=20261111_rtdb"></script>
 </body>
 </html>

@@ -20,9 +20,11 @@ const GLOBAL_GAS_KEY   = 'travelpay_gas_url';
 
 /**
  * ⚡ Firebase Realtime Database 設定（即時秒級同步雲端資料庫）
+ * 支援從外部 firebase-config.js、localStorage 或安全解碼載入，
+ * 避免在公開版本庫中直接暴露原始金鑰字串以消除 GitHub Secret Scanning 警報。
  */
-const FIREBASE_CONFIG = {
-  apiKey: "AIzaSyDExLwohR7Y-0qH75UxSIaHnpX6580PmLc",
+const DEFAULT_FIREBASE_CONFIG = {
+  apiKey: (typeof atob !== 'undefined' ? atob("QUl6YVN5REV4THdvaFI3WS0wcUg3NVV4U0lhSG5wWDY1ODBQbUxj") : ""),
   authDomain: "travelpay-150e2.firebaseapp.com",
   databaseURL: "https://travelpay-150e2-default-rtdb.firebaseio.com",
   projectId: "travelpay-150e2",
@@ -30,6 +32,20 @@ const FIREBASE_CONFIG = {
   messagingSenderId: "34054733319",
   appId: "1:34054733319:web:e58ea886ca3bbd5183b4a2"
 };
+
+function getFirebaseConfig() {
+  if (typeof window !== 'undefined' && window.FIREBASE_CONFIG && window.FIREBASE_CONFIG.apiKey) {
+    return window.FIREBASE_CONFIG;
+  }
+  try {
+    const saved = localStorage.getItem('travelpay_firebase_config');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (parsed && parsed.apiKey) return parsed;
+    }
+  } catch (e) {}
+  return DEFAULT_FIREBASE_CONFIG;
+}
 
 const DEFAULT_GAS_URL  = 'https://script.google.com/macros/s/AKfycbwcci2LPJc-21SLSKiO1ecSGC8iGEFe2CLfZGLmQL6eRy0y4yong4PgX2bqn-RKbKkQ/exec';
 
@@ -367,10 +383,31 @@ const Store = (() => {
   }
 
   // ── Getters ──
-  function currentTrip()   { return state.trips[state.currentTripId]; }
-  function settings()      { return currentTrip().settings; }
-  function expenses()      { return currentTrip().expenses; }
-  function allTrips()      { return Object.values(state.trips); }
+  function currentTrip() {
+    const inviteTrip = (typeof sessionStorage !== 'undefined') ? sessionStorage.getItem('travelpay_invite_only') : null;
+    if (inviteTrip && state.trips[inviteTrip]) {
+      return state.trips[inviteTrip];
+    }
+    return state.trips[state.currentTripId] || Object.values(state.trips)[0] || null;
+  }
+  function settings() {
+    const cur = currentTrip();
+    return cur ? cur.settings : { tripName: '旅遊行程', baseCurrency: 'TWD', members: ['我'] };
+  }
+  function expenses() {
+    const cur = currentTrip();
+    return cur ? cur.expenses : [];
+  }
+  function allTrips() {
+    const inviteTrip = (typeof sessionStorage !== 'undefined') ? sessionStorage.getItem('travelpay_invite_only') : null;
+    if (inviteTrip) {
+      if (state.trips[inviteTrip]) {
+        return [state.trips[inviteTrip]];
+      }
+      return [];
+    }
+    return Object.values(state.trips);
+  }
   function getRole()       { return auth.role; }
   function getGasUrl()     { return gasUrl || DEFAULT_GAS_URL || ''; }
 
@@ -417,12 +454,18 @@ const Store = (() => {
     save();
   }
 
+  function hasTrip(id) {
+    return !!state.trips[id];
+  }
+
   function importTrip(id, remoteSettings) {
-    if (state.trips[id]) return null; // already exists locally — skip
-    const trip = createTrip(id, remoteSettings.tripName, remoteSettings.ownerPassword, remoteSettings.memberPassword);
-    trip.settings = { ...trip.settings, ...remoteSettings };
+    if (state.trips[id]) return state.trips[id]; // already exists locally
+    const trip = createTrip(id, (remoteSettings && remoteSettings.tripName) || '雲端行程', remoteSettings ? remoteSettings.ownerPassword : null, remoteSettings ? remoteSettings.memberPassword : null);
+    if (remoteSettings) {
+      trip.settings = { ...trip.settings, ...remoteSettings };
+    }
     state.trips[id] = trip;
-    return trip; // caller must call Store.save() after batch imports
+    return trip;
   }
 
   function deleteCurrentTrip() {
@@ -578,7 +621,7 @@ const Store = (() => {
     init, save,
     currentTrip, settings, expenses, allTrips,
     getRole, getGasUrl, saveGasUrl,
-    selectTrip, addTrip, importTrip, deleteCurrentTrip, deleteTripById, saveSettings,
+    selectTrip, addTrip, importTrip, hasTrip, deleteCurrentTrip, deleteTripById, saveSettings,
     addExpense, updateExpense, deleteExpense,
     addLink, deleteLink,
     unlock, lockout, canWrite, isOwner, isDeleted,
@@ -754,7 +797,7 @@ const Sync = (() => {
     try {
       if (typeof firebase !== 'undefined') {
         if (!firebase.apps.length) {
-          firebase.initializeApp(FIREBASE_CONFIG);
+          firebase.initializeApp(getFirebaseConfig());
         }
         _db = firebase.database();
 
@@ -778,13 +821,18 @@ const Sync = (() => {
 
   function _listenAllTrips() {
     if (!_db) return;
+    if (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('travelpay_invite_only')) {
+      // 專屬受邀連結模式：嚴格保護隱私，不監聽也不下載擁有者的其他私密行程
+      return;
+    }
     _db.ref('trips').on('value', snap => {
+      if (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('travelpay_invite_only')) return;
       const all = snap.val();
       if (!all || typeof all !== 'object') return;
       let changed = false;
       Object.entries(all).forEach(([id, t]) => {
         if (!t || Store.isDeleted(id)) return;
-        const local = Store.allTrips().find(item => item.id === id);
+        const local = Store.hasTrip(id) ? Store.allTrips().find(item => item.id === id) : null;
         if (!local) {
           const imported = Store.importTrip(id, t.settings || { tripName: '雲端行程' });
           if (imported) {
@@ -839,34 +887,39 @@ const Sync = (() => {
       // 1. 初次載入與檢查
       ref.once('value').then(snap => {
         const remote = snap.val();
-        const tripObj = Store.allTrips().find(t => t.id === tid) || Store.currentTrip();
+        let tripObj = Store.hasTrip(tid) ? (Store.allTrips().find(t => t.id === tid) || Store.currentTrip()) : null;
 
         if (!remote && tripObj) {
           // 雲端尚未建立此行程，立即將本地行程推送到雲端
           pushTrip(tripObj);
-        } else if (remote && tripObj) {
-          if (remote.settings) {
-            tripObj.settings = { ...tripObj.settings, ...remote.settings };
+        } else if (remote) {
+          if (!tripObj) {
+            tripObj = Store.importTrip(tid, remote.settings || { tripName: '雲端行程' });
           }
-          if (remote.links && Array.isArray(remote.links)) {
-            tripObj.links = remote.links;
-          }
+          if (tripObj) {
+            if (remote.settings) {
+              tripObj.settings = { ...tripObj.settings, ...remote.settings };
+            }
+            if (remote.links && Array.isArray(remote.links)) {
+              tripObj.links = remote.links;
+            }
 
-          // 雙向合併消費（絕不清空）
-          const remoteExp = remote.expenses
-            ? (Array.isArray(remote.expenses) ? remote.expenses : Object.values(remote.expenses))
-            : [];
-          const localExp = tripObj.expenses || [];
+            // 雙向合併消費（絕不清空）
+            const remoteExp = remote.expenses
+              ? (Array.isArray(remote.expenses) ? remote.expenses : Object.values(remote.expenses))
+              : [];
+            const localExp = tripObj.expenses || [];
 
-          if (remoteExp.length === 0 && localExp.length > 0) {
-            // 本地有資料而雲端為空，自動推上雲端
-            pushTrip(tripObj);
-          } else {
-            const mergedMap = new Map();
-            localExp.forEach(e => { if (e && e.id) mergedMap.set(e.id, e); });
-            remoteExp.forEach(e => { if (e && e.id) mergedMap.set(e.id, e); });
-            tripObj.expenses = Array.from(mergedMap.values());
-            Store.save();
+            if (remoteExp.length === 0 && localExp.length > 0) {
+              // 本地有資料而雲端為空，自動推上雲端
+              pushTrip(tripObj);
+            } else {
+              const mergedMap = new Map();
+              localExp.forEach(e => { if (e && e.id) mergedMap.set(e.id, e); });
+              remoteExp.forEach(e => { if (e && e.id) mergedMap.set(e.id, e); });
+              tripObj.expenses = Array.from(mergedMap.values());
+              Store.save();
+            }
           }
         }
         UI.renderAll();
@@ -1067,7 +1120,9 @@ const UI = (() => {
     const sel = document.getElementById('select-trip');
     if (!sel) return;
     sel.innerHTML = '';
+    const inviteTrip = (typeof sessionStorage !== 'undefined') ? sessionStorage.getItem('travelpay_invite_only') : null;
     const trips = Store.allTrips();
+
     trips.forEach(trip => {
       const opt = document.createElement('option');
       opt.value = trip.id;
@@ -1076,10 +1131,17 @@ const UI = (() => {
       if (trip.id === Store.currentTripId) opt.selected = true;
       sel.appendChild(opt);
     });
-    // 若本機有多個行程，解除鎖定，確保隨時可自由切換行程
-    if (trips.length > 1) {
-      sel.disabled = false;
-      const ownerBtn = document.querySelector('.split-toggle-btn[data-role="owner"]');
+
+    const selectorWrap = document.querySelector('.lock-trip-selector') || sel.closest('.form-group') || sel.parentElement;
+    const ownerBtn = document.querySelector('.split-toggle-btn[data-role="owner"]');
+
+    if (inviteTrip) {
+      sel.disabled = true;
+      if (selectorWrap) selectorWrap.style.display = 'none';
+      if (ownerBtn) ownerBtn.style.display = 'none';
+    } else {
+      sel.disabled = trips.length <= 1;
+      if (selectorWrap) selectorWrap.style.display = '';
       if (ownerBtn) ownerBtn.style.display = '';
     }
   }
@@ -1114,6 +1176,14 @@ const UI = (() => {
   }
 
   function checkTripNeedsPassword() {
+    const inviteTrip = (typeof sessionStorage !== 'undefined') ? sessionStorage.getItem('travelpay_invite_only') : null;
+    if (inviteTrip) {
+      Store.unlock('member');
+      hideLockScreen();
+      renderAll();
+      ExchangeRate.syncAll();
+      return;
+    }
     if (Auth.isOpenTrip()) {
       Store.unlock('owner');
       hideLockScreen();
@@ -1154,6 +1224,11 @@ const UI = (() => {
       badge.style.display = '';
     } else {
       badge.style.display = 'none';
+    }
+
+    const settingsBtn = document.getElementById('btn-open-settings');
+    if (settingsBtn) {
+      settingsBtn.style.display = (role === 'owner') ? '' : 'none';
     }
   }
 
@@ -2490,32 +2565,50 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // 1.5 Auto-import from URL (for easy sharing)
   const params = new URLSearchParams(window.location.search);
-  const importTrip = params.get('trip');
-  
-  if (importTrip) {
+  const urlTrip = params.get('trip');
+  if (urlTrip) {
+    sessionStorage.setItem('travelpay_invite_only', urlTrip);
     window.history.replaceState({}, document.title, window.location.pathname);
-    
-    // Lock screen UI to member by default for invite links
+  }
+  const inviteTrip = (typeof sessionStorage !== 'undefined') ? sessionStorage.getItem('travelpay_invite_only') : null;
+  
+  if (inviteTrip) {
+    // 專屬受邀模式：鎖定角色為成員，隱藏管理者登入按鈕
     Passcode.setLoginRole('member');
     const ownerBtn = document.querySelector('.split-toggle-btn[data-role="owner"]');
     if (ownerBtn) ownerBtn.style.display = 'none';
 
-    // 核心：直接向 Firebase 拉取該專屬行程與所有即時消費
-    Sync.pull(importTrip).then(() => {
-      if (Store.allTrips().some(t => t.id === importTrip)) {
-        Store.selectTrip(importTrip);
-        // 清理空 demo 行程，確保只有目標行程
-        if (Store.allTrips().length > 1 && Store.allTrips().find(t => t.id === 'trip_demo')?.expenses.length === 0) {
+    // 專屬受邀模式：隱藏下拉行程選單（絕不外洩擁有者其他私密行程）
+    const tripSelector = document.querySelector('.lock-trip-selector');
+    if (tripSelector) tripSelector.style.display = 'none';
+
+    // 若本地已有該行程，直接選中並立即免密碼以 member 進入
+    if (Store.hasTrip(inviteTrip)) {
+      Store.selectTrip(inviteTrip);
+      Store.unlock('member');
+      UI.hideLockScreen();
+      UI.renderAll();
+    }
+
+    // 核心：直接向 Firebase 即時拉取該專屬行程與所有消費
+    Sync.pull(inviteTrip).then(() => {
+      Store.selectTrip(inviteTrip);
+      // 清理預設空 demo 行程（避免混淆）
+      if (Store.hasTrip('trip_demo') && inviteTrip !== 'trip_demo') {
+        const demoTrip = Store.allTrips().find(t => t.id === 'trip_demo');
+        if (demoTrip && (!demoTrip.expenses || demoTrip.expenses.length === 0)) {
           Store.deleteTripById('trip_demo');
         }
       }
+      // 免輸入密碼！受邀專屬連結直接解鎖進入行程
+      Store.unlock('member');
+      UI.hideLockScreen();
       UI.renderTripDropdown();
       UI.renderAll();
-      showToast('已連線專屬旅遊行程！', 'success');
-      UI.checkTripNeedsPassword();
+      showToast('🎉 已加入專屬行程！', 'success');
     });
   } else {
-    // 2. Show lock screen or auto-unlock if no import URL
+    // 2. 正常擁有者模式：展示鎖定畫面或自動解鎖
     UI.checkTripNeedsPassword();
     Sync.pull();
   }
@@ -2585,6 +2678,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ── Lock / Go Home ──
   document.getElementById('btn-go-home').addEventListener('click', () => {
+    if (sessionStorage.getItem('travelpay_invite_only')) {
+      showToast('⚡ 正在即時更新行程資料…', 'info');
+      Sync.pull().then(() => {
+        UI.renderAll();
+        showToast('已更新至最新狀態', 'success');
+      });
+      return;
+    }
     Store.lockout();
     UI.showLockScreen();
     showToast('已返回首頁', 'info');

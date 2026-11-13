@@ -520,15 +520,20 @@ const Store = (() => {
 
   // ── Expense CRUD ──
   function addExpense(expense) {
+    const trip = currentTrip();
+    if (!trip) return null;
+    if (!trip.expenses) trip.expenses = [];
     const id = `exp_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const newExp = { ...expense, id };
-    currentTrip().expenses.push(newExp);
+    trip.expenses.push(newExp);
     save();
     return newExp;
   }
 
   function updateExpense(id, expense) {
-    const list = currentTrip().expenses;
+    const trip = currentTrip();
+    if (!trip || !trip.expenses) return null;
+    const list = trip.expenses;
     const idx  = list.findIndex(e => e.id === id);
     if (idx === -1) return null;
     list[idx] = { ...list[idx], ...expense, id };
@@ -966,17 +971,33 @@ const Sync = (() => {
     });
   }
 
+  function _clean(val) {
+    if (val === undefined) return null;
+    return JSON.parse(JSON.stringify(val, (key, value) => {
+      return value === undefined ? null : value;
+    }));
+  }
+
   function pushTrip(trip) {
     if (!_db || !trip) return;
-    const expMap = {};
-    (trip.expenses || []).forEach(e => { if (e && e.id) expMap[e.id] = e; });
-    _db.ref(`trips/${trip.id}`).set({
-      id: trip.id,
-      settings: trip.settings,
-      links: trip.links || [],
-      expenses: expMap,
-      updatedAt: Date.now()
-    });
+    try {
+      const expMap = {};
+      (trip.expenses || []).forEach(e => {
+        if (e && e.id) expMap[e.id] = _clean(e);
+      });
+      const data = _clean({
+        id: trip.id,
+        settings: trip.settings,
+        links: trip.links || [],
+        expenses: expMap,
+        updatedAt: Date.now()
+      });
+      _db.ref(`trips/${trip.id}`).set(data).catch(err => {
+        console.warn('Firebase pushTrip error:', err);
+      });
+    } catch (e) {
+      console.warn('pushTrip error:', e);
+    }
   }
 
   function pushToTrip(tripId, action, payload) {
@@ -987,28 +1008,45 @@ const Sync = (() => {
     const tid = tripId || Store.currentTripId;
     if (!tid) return;
 
-    if (action === 'add_expense' || action === 'update_expense') {
-      const exp = payload.expense;
-      if (exp && exp.id) {
-        _db.ref(`trips/${tid}/expenses/${exp.id}`).set(exp);
-        _db.ref(`trips/${tid}/updatedAt`).set(Date.now());
+    try {
+      if (action === 'add_expense' || action === 'update_expense') {
+        const exp = payload.expense;
+        if (exp && exp.id) {
+          const cleanExp = _clean(exp);
+          _db.ref(`trips/${tid}/expenses/${exp.id}`).set(cleanExp).catch(err => {
+            console.warn('Firebase set expense error:', err);
+          });
+          _db.ref(`trips/${tid}/updatedAt`).set(Date.now()).catch(() => {});
+        }
+      } else if (action === 'delete_expense') {
+        if (payload.id) {
+          _db.ref(`trips/${tid}/expenses/${payload.id}`).remove().catch(err => {
+            console.warn('Firebase remove expense error:', err);
+          });
+          _db.ref(`trips/${tid}/updatedAt`).set(Date.now()).catch(() => {});
+        }
+      } else if (action === 'save_settings') {
+        if (payload.settings) {
+          const cleanSettings = _clean(payload.settings);
+          _db.ref(`trips/${tid}/settings`).set(cleanSettings).catch(err => {
+            console.warn('Firebase set settings error:', err);
+          });
+        }
+        if (payload.links) {
+          const cleanLinks = _clean(payload.links);
+          _db.ref(`trips/${tid}/links`).set(cleanLinks).catch(err => {
+            console.warn('Firebase set links error:', err);
+          });
+        }
+        _db.ref(`trips/${tid}/updatedAt`).set(Date.now()).catch(() => {});
+      } else if (action === 'delete_trip') {
+        const delId = payload.deletedTripId || tid;
+        _db.ref(`trips/${delId}`).remove().catch(err => {
+          console.warn('Firebase delete trip error:', err);
+        });
       }
-    } else if (action === 'delete_expense') {
-      if (payload.id) {
-        _db.ref(`trips/${tid}/expenses/${payload.id}`).remove();
-        _db.ref(`trips/${tid}/updatedAt`).set(Date.now());
-      }
-    } else if (action === 'save_settings') {
-      if (payload.settings) {
-        _db.ref(`trips/${tid}/settings`).set(payload.settings);
-      }
-      if (payload.links) {
-        _db.ref(`trips/${tid}/links`).set(payload.links);
-      }
-      _db.ref(`trips/${tid}/updatedAt`).set(Date.now());
-    } else if (action === 'delete_trip') {
-      const delId = payload.deletedTripId || tid;
-      _db.ref(`trips/${delId}`).remove();
+    } catch (e) {
+      console.warn('pushToTrip error:', e);
     }
   }
 
@@ -1566,7 +1604,7 @@ const UI = (() => {
     const billingBox  = document.getElementById('stats-billing');
     if (!billingCard || !billingBox) return;
 
-    if (cards.length === 0) {
+    if (cards.length === 0 || !Store.isOwner()) {
       billingCard.style.display = 'none';
       return;
     }
@@ -1861,14 +1899,18 @@ const ExpenseForm = (() => {
       sel.appendChild(opt);
     };
     addOpt('現金', '💵 現金');
-    const cards = Store.settings().creditCards || [];
-    cards.forEach(c => {
-      const name = typeof c === 'string' ? c : c.name;
-      const day  = typeof c === 'object' && c.billingDay ? `（結帳日 ${c.billingDay} 號）` : '';
-      addOpt(`信用卡(${name})`, `💳 ${name}${day}`);
-    });
-    addOpt('信用卡(其他)', '💳 其他信用卡');
-    addOpt('IC卡/Pay', '📱 IC卡 / 街口 / LINE Pay');
+
+    // 一般使用者（成員 member）不顯示信用卡與電子支付選項，只保留現金；僅管理者才顯示信用卡
+    if (Store.isOwner()) {
+      const cards = Store.settings().creditCards || [];
+      cards.forEach(c => {
+        const name = typeof c === 'string' ? c : c.name;
+        const day  = typeof c === 'object' && c.billingDay ? `（結帳日 ${c.billingDay} 號）` : '';
+        addOpt(`信用卡(${name})`, `💳 ${name}${day}`);
+      });
+      addOpt('信用卡(其他)', '💳 其他信用卡');
+      addOpt('IC卡/Pay', '📱 IC卡 / 街口 / LINE Pay');
+    }
   }
 
   function _renderSplitCheckboxes(preChecked = null) {
@@ -1992,7 +2034,14 @@ const ExpenseForm = (() => {
     // Payment method
     if (isEdit) {
       const methEl = document.getElementById('expense-pay-method');
-      setTimeout(() => { methEl.value = expense.paymentMethod; }, 0);
+      setTimeout(() => {
+        if (expense.paymentMethod && ![...methEl.options].some(o => o.value === expense.paymentMethod)) {
+          const opt = document.createElement('option');
+          opt.value = opt.textContent = expense.paymentMethod;
+          methEl.appendChild(opt);
+        }
+        methEl.value = expense.paymentMethod || '現金';
+      }, 0);
     }
 
     // Split
@@ -2052,7 +2101,7 @@ const ExpenseForm = (() => {
       currency, amount, title, category, paidBy,
       paymentMethod: method, date, note, splitWith,
       // Multi-attachment
-      attachments: _attachments.length > 0 ? [..._attachments] : undefined,
+      attachments: _attachments.length > 0 ? [..._attachments] : [],
       // Legacy compat for GAS
       attachmentData: _attachments[0]?.data || '',
       attachmentName: _attachments[0]?.name || '',

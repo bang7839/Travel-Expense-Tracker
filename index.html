@@ -594,25 +594,33 @@
   <!-- Toast Container -->
   <div id="toast-container" aria-live="polite" aria-atomic="false"></div>
 
-  <!-- Debug: Global Error Handler (remove when stable) -->
+  <!-- Debug: Global Error Handler -->
   <script>
     window.onerror = function(msg, url, line, col, err) {
+      // 忽略跨域靜態資源未授權造成的無害 Script error.
+      if (msg === 'Script error.' && !err) {
+        console.warn('Silent cross-origin script error ignored');
+        return true;
+      }
       var el = document.createElement('div');
       el.style.cssText = 'position:fixed;bottom:10px;left:10px;right:10px;z-index:99999;background:#1a0005;color:#ff6b6b;padding:12px 16px;border-radius:12px;font-size:13px;border:1px solid #ff4444;font-family:monospace;max-height:200px;overflow:auto;';
-      el.textContent = '❌ JS Error [L' + line + ']: ' + msg;
+      el.textContent = '❌ JS Error [L' + line + ']: ' + (err && err.message ? err.message : msg);
       document.body.appendChild(el);
       return false;
     };
+    window.addEventListener('unhandledrejection', function(e) {
+      console.warn('Unhandled rejection:', e.reason);
+    });
   </script>
 
   <!-- Firebase Realtime Database SDK (compat build) -->
-  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-database-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js" crossorigin="anonymous"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-database-compat.js" crossorigin="anonymous"></script>
 
   <!-- Optional Private Firebase Config (git-ignored) -->
   <script src="firebase-config.js" onerror="void 0"></script>
 
   <!-- Main App Script -->
-  <script src="app.js?v=20261111_invite_clean"></script>
+  <script src="app.js?v=20261113_cash_only"></script>
 </body>
 </html>
